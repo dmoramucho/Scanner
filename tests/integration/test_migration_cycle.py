@@ -18,7 +18,8 @@ from tests.integration.helpers import alembic, dbname_of, maintenance_dsn, with_
 
 pytestmark = pytest.mark.integration
 
-EXPECTED_TABLES = {
+#: What `0001_expand` creates.
+EXPAND_TABLES = {
     "asset",
     "asset_identifier",
     "asset_merge_event",
@@ -28,8 +29,16 @@ EXPECTED_TABLES = {
     "scope_authorization",
 }
 
-#: Explicitly NOT created by 0001_expand — they belong to M2/M3 (data-model.md §5).
-DEFERRED_TABLES = {"software_component", "vulnerability_match", "triage_snapshot", "insight"}
+#: What `0002_software_component` adds — the current-state projection ER writes into.
+SOFTWARE_TABLES = {"software_component"}
+
+EXPECTED_TABLES = EXPAND_TABLES | SOFTWARE_TABLES
+
+#: Still not created by anything — they belong to M2/M3 (data-model.md §5). A table arrives
+#: with the feature that needs it (AGENTS.md §5).
+DEFERRED_TABLES = {"vulnerability_match", "triage_snapshot", "insight"}
+
+HEAD_REVISION = "0002_software_component"
 
 
 def _table_names(url: str) -> set[str]:
@@ -64,7 +73,16 @@ def scratch_database(migrated_database: str) -> Iterator[str]:
             admin.execute(sql.SQL("drop database if exists {} with (force)").format(identifier))
 
 
+def _current_revision(url: str) -> str:
+    with psycopg.connect(url) as conn:
+        row = conn.execute("select version_num from alembic_version").fetchone()
+    assert row is not None
+    return str(row[0])
+
+
 def test_upgrade_then_downgrade_is_a_round_trip(scratch_database: str) -> None:
+    """Every revision, forward and back. The rollback path is the alternative to restoring
+    from backup at 03:00, so it is exercised on every run."""
     upgrade = alembic("upgrade", "head", url=scratch_database)
     assert upgrade.returncode == 0, f"{upgrade.stdout}\n{upgrade.stderr}"
 
@@ -72,7 +90,7 @@ def test_upgrade_then_downgrade_is_a_round_trip(scratch_database: str) -> None:
     assert after_upgrade >= EXPECTED_TABLES
     assert _function_exists(scratch_database, "forbid_mutation")
 
-    downgrade = alembic("downgrade", "-1", url=scratch_database)
+    downgrade = alembic("downgrade", "base", url=scratch_database)
     assert downgrade.returncode == 0, f"{downgrade.stdout}\n{downgrade.stderr}"
 
     after_downgrade = _table_names(scratch_database)
@@ -83,16 +101,26 @@ def test_upgrade_then_downgrade_is_a_round_trip(scratch_database: str) -> None:
     assert after_downgrade == {"alembic_version"}
 
 
+def test_downgrading_one_step_removes_only_the_latest_revision(scratch_database: str) -> None:
+    """`downgrade -1` is the rollback an operator reaches for after a bad release: it must
+    undo the last revision and leave everything earlier untouched."""
+    assert alembic("upgrade", "head", url=scratch_database).returncode == 0
+
+    assert alembic("downgrade", "-1", url=scratch_database).returncode == 0
+
+    remaining = _table_names(scratch_database)
+    assert remaining & SOFTWARE_TABLES == set()
+    assert remaining >= EXPAND_TABLES
+    assert _current_revision(scratch_database) == "0001_expand"
+
+
 def test_upgrade_is_recorded_at_the_expected_revision(scratch_database: str) -> None:
     assert alembic("upgrade", "head", url=scratch_database).returncode == 0
 
-    with psycopg.connect(scratch_database) as conn:
-        row = conn.execute("select version_num from alembic_version").fetchone()
-    assert row is not None
-    assert row[0] == "0001_expand"
+    assert _current_revision(scratch_database) == HEAD_REVISION
 
 
-def test_expand_does_not_create_the_deferred_m2_m3_tables(scratch_database: str) -> None:
+def test_the_deferred_m2_m3_tables_are_still_not_created(scratch_database: str) -> None:
     """Scope discipline, asserted: `insight` and friends arrive with the features that
     need them, not early (AGENTS.md §5)."""
     assert alembic("upgrade", "head", url=scratch_database).returncode == 0

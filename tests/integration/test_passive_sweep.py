@@ -17,6 +17,7 @@ import psycopg
 import pytest
 
 from adapters.collector.passive import Capture, CollectionResult, PassiveCollector
+from adapters.postgres.asset_repository import PostgresAssetRepository
 from adapters.postgres.observation_sink import PostgresObservationSink
 from adapters.postgres.scope_authority import SCOPE_ACTION, PostgresScopeAuthority
 from domain.errors import ValidationError
@@ -69,6 +70,7 @@ def sweep(autocommit_conn: Connection) -> PassiveSweep:
     return PassiveSweep(
         PostgresScopeAuthority(autocommit_conn, actor="engine", correlation_id="sweep-1"),
         PostgresObservationSink(autocommit_conn),
+        PostgresAssetRepository(autocommit_conn),
     )
 
 
@@ -138,7 +140,7 @@ def test_an_out_of_scope_target_is_denied_audited_and_never_observed(
     fixtures), so this asserts the gate — not the fixture."""
     authorize_range(autocommit_conn, tenant, AUTHORIZED_RANGE)
     candidates = collect(tenant, uuid4(), captures).candidates
-    assert OUT_OF_SCOPE_TARGET in {str(target) for target, _ in candidates}
+    assert OUT_OF_SCOPE_TARGET in {str(target) for target, _, _ in candidates}
 
     outcome = sweep.run(tenant, candidates)
 
@@ -220,3 +222,78 @@ def test_the_sweep_refuses_an_observation_belonging_to_another_tenant(
 
     with pytest.raises(ValidationError, match="does not match the sweep tenant"):
         sweep.run(tenant, foreign)
+
+
+def asset_count(conn: Connection, tenant: UUID) -> int:
+    row = conn.execute("select count(*) from asset where tenant_id = %s", (tenant,)).fetchone()
+    assert row is not None
+    return int(row[0])
+
+
+def test_the_sweep_resolves_observations_into_assets(
+    sweep: PassiveSweep, autocommit_conn: Connection, tenant: UUID, captures: list[Capture]
+) -> None:
+    """M0, end to end: capture → scope gate → observation → resolved asset, with the
+    asserting observation linked from each identifier."""
+    authorize_range(autocommit_conn, tenant, AUTHORIZED_RANGE)
+
+    outcome = sweep.run(tenant, collect(tenant, uuid4(), captures).candidates)
+
+    assert outcome.assets > 0
+    assert asset_count(autocommit_conn, tenant) == outcome.assets
+    unlinked = autocommit_conn.execute(
+        "select count(*) from asset_identifier where tenant_id = %s and observation_id is null",
+        (tenant,),
+    ).fetchone()
+    assert unlinked is not None
+    assert unlinked[0] == 0  # every anchor traces back to the observation that asserted it
+
+
+def test_one_device_seen_by_two_sources_is_one_asset(
+    sweep: PassiveSweep, autocommit_conn: Connection, tenant: UUID, captures: list[Capture]
+) -> None:
+    """The moat: 10.10.5.20 appears in both the ARP table and the DHCP leases with the same
+    MAC. That is one asset with several observations, not two rows (AGENTS.md §3)."""
+    authorize_range(autocommit_conn, tenant, AUTHORIZED_RANGE)
+
+    sweep.run(tenant, collect(tenant, uuid4(), captures).candidates)
+
+    rows = autocommit_conn.execute(
+        """
+        select count(distinct asset_id) from asset_identifier
+        where tenant_id = %s and kind = 'mac' and value = 'aa:bb:cc:00:11:22'
+        """,
+        (tenant,),
+    ).fetchall()
+    assert rows[0][0] == 1
+
+
+def test_repeated_sweeps_do_not_inflate_the_asset_graph(
+    sweep: PassiveSweep, autocommit_conn: Connection, tenant: UUID, captures: list[Capture]
+) -> None:
+    """Two runs of the same capture are new evidence (new observations) about the same
+    devices (the same assets). If asset count grew per run, every dashboard built on this
+    would be wrong."""
+    authorize_range(autocommit_conn, tenant, AUTHORIZED_RANGE)
+
+    first = sweep.run(tenant, collect(tenant, uuid4(), captures).candidates)
+    second = sweep.run(tenant, collect(tenant, uuid4(), captures).candidates)
+
+    assert second.asset_ids == first.asset_ids
+    assert asset_count(autocommit_conn, tenant) == first.assets
+
+
+def test_a_denied_target_produces_no_asset(
+    sweep: PassiveSweep, autocommit_conn: Connection, tenant: UUID, captures: list[Capture]
+) -> None:
+    """Out-of-scope means out of the graph entirely — no observation and no asset."""
+    authorize_range(autocommit_conn, tenant, AUTHORIZED_RANGE)
+
+    sweep.run(tenant, collect(tenant, uuid4(), captures).candidates)
+
+    foreign = autocommit_conn.execute(
+        "select count(*) from asset_identifier where tenant_id = %s and value = %s",
+        (tenant, OUT_OF_SCOPE_TARGET),
+    ).fetchone()
+    assert foreign is not None
+    assert foreign[0] == 0

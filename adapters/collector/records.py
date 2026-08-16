@@ -13,10 +13,15 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from uuid import UUID
 
-from domain.models import IPAddress, ObservationInput
+from domain.models import AnchorObservation, IPAddress, ObservationInput
 
 #: Passive sightings assert identity anchors (address ↔ MAC ↔ name), not software state.
 OBSERVATION_TYPE = "identity"
+
+#: What the engine consumes: the target the sighting concerns, the observation to record,
+#: and the anchors entity resolution should reason over. A plain tuple of domain types so
+#: neither layer has to import the other's module (`engine.sweep` declares the same alias).
+Candidate = tuple[IPAddress, ObservationInput, tuple[AnchorObservation, ...]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +47,32 @@ class SkippedLine:
 
     lineno: int
     reason: str
+
+
+def anchors_of(record: PassiveRecord) -> tuple[AnchorObservation, ...]:
+    """The identity anchors a passive sighting asserts, strongest first.
+
+    A MAC is the only durable anchor passive discovery yields — a serial or a certificate
+    fingerprint needs credentialed or active collection (M1). Hostname and IP are included
+    because they are worth attaching to an asset, but the repository will never *identify*
+    one from them: they rotate (AGENTS.md §3).
+
+    Each anchor inherits the sighting's confidence, so a MAC learned from an mDNS record
+    does not arrive claiming the certainty of one read off the wire.
+    """
+    anchors = []
+    if record.mac is not None:
+        anchors.append(
+            AnchorObservation(kind="mac", value=record.mac, confidence=record.confidence)
+        )
+    if record.hostname is not None:
+        anchors.append(
+            AnchorObservation(kind="hostname", value=record.hostname, confidence=record.confidence)
+        )
+    anchors.append(
+        AnchorObservation(kind="ip", value=str(record.target), confidence=record.confidence)
+    )
+    return tuple(anchors)
 
 
 def to_observation_input(

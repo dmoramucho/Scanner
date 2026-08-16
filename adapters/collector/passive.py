@@ -28,9 +28,15 @@ from adapters.collector.parsers import (
     parse_dhcp_leases,
     parse_mdns,
 )
-from adapters.collector.records import PassiveRecord, SkippedLine, to_observation_input
+from adapters.collector.records import (
+    Candidate,
+    PassiveRecord,
+    SkippedLine,
+    anchors_of,
+    to_observation_input,
+)
 from domain.errors import ValidationError
-from domain.models import IPAddress, ObservationInput
+from domain.models import ObservationInput
 
 COLLECTOR_NAME: Final = "passive-collector"
 COLLECTOR_VERSION: Final = "0.1.0"
@@ -55,14 +61,15 @@ class Capture:
 
 @dataclass(frozen=True, slots=True)
 class CollectionResult:
-    """Candidate observations, each with the target they concern, plus what was refused.
+    """Candidate observations, each with its target and its anchors, plus what was refused.
 
     The target travels alongside the observation because scope enforcement happens in the
     engine, not here: the collector's job is to say what it saw, the engine's job is to
-    decide what may be acted on (AGENTS.md §2.5).
+    decide what may be acted on (AGENTS.md §2.5). The anchors travel with it for the same
+    reason — the collector knows what it read, entity resolution decides what it means.
     """
 
-    candidates: tuple[tuple[IPAddress, ObservationInput], ...] = ()
+    candidates: tuple[Candidate, ...] = ()
     skipped: tuple[SkippedLine, ...] = ()
     sources: tuple[str, ...] = field(default_factory=tuple)
 
@@ -92,7 +99,7 @@ class PassiveCollector:
         timestamp we would otherwise have to guess at."""
         _require_utc_aware("collected_at", collected_at)
 
-        candidates: list[tuple[IPAddress, ObservationInput]] = []
+        candidates: list[Candidate] = []
         skipped: list[SkippedLine] = []
         sources: list[str] = []
 
@@ -101,9 +108,8 @@ class PassiveCollector:
             parsed = self._parse(capture)
             skipped.extend(parsed.skipped)
             for record in parsed.records:
-                candidates.append(
-                    (record.target, self._to_observation(record, tenant_id, run_id, collected_at))
-                )
+                observation = self._to_observation(record, tenant_id, run_id, collected_at)
+                candidates.append((record.target, observation, anchors_of(record)))
             if parsed.records:
                 sources.append(capture.kind)
 

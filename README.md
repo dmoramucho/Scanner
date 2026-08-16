@@ -18,7 +18,7 @@ unmanaged-device (shadow-IT) diff, confidence-based noise reduction, and grounde
 | [`docs/data/data-model.md`](docs/data/data-model.md) | The schema of record; applied by `0001_expand` |
 | [`docs/adr/`](docs/adr/) | One ADR per material decision |
 | `domain/` | The deterministic core: models, ports, errors. **stdlib + pydantic only** |
-| `adapters/postgres/` | `ScopeAuthority` and `ObservationSink` over Postgres — the only place psycopg lives |
+| `adapters/postgres/` | `ScopeAuthority`, `ObservationSink`, `AssetRepository` over Postgres — the only place psycopg lives |
 | `adapters/collector/` | Passive discovery (ARP / DHCP / mDNS). Read-only and store-free by construction |
 | `engine/` | Orchestration; the scope gate runs before anything is recorded |
 | `config/` | Startup configuration — validated once, fail-fast |
@@ -78,18 +78,31 @@ secret is actually used.
 
 ## Status
 
-**P3 — scope enforcement, ingestion, and passive discovery.** A capture goes end to end:
-parsers turn an ARP table, DHCP leases, or mDNS output into provenance-complete observations;
-the engine calls `require_authorized` on every target *before* anything is recorded; the sink
-writes them idempotently into the append-only spine.
+**M0 complete (P1–P4).** A capture goes end to end: parsers turn an ARP table, DHCP leases, or
+mDNS output into provenance-complete observations; the engine calls `require_authorized` on
+every target *before* anything is recorded; the sink writes them idempotently into the
+append-only spine; entity resolution collapses them into assets by stable anchors.
 
-The scope gate is deny-by-default and fails closed — no authorization, a revoked one, an
-expired one, or another tenant's one all deny, every decision lands in `audit_log` before it is
-returned, and an out-of-scope target leaves nothing in `observation`. The passive collector
-imports no socket, no subprocess, and no database driver, so "read-only against target
-infrastructure" is a property of its dependencies rather than a promise
-(`tests/test_adapter_boundaries.py`).
+What the system guarantees, each proven by tests against a real Postgres:
 
-Next: entity resolution into `asset` (`AssetRepository`), then the M1 active/credentialed
-adapters. Deferred by design: active scanning, live packet capture, RLS, and the
-`software_component` / `vulnerability_match` / `triage_snapshot` / `insight` tables (M2/M3).
+- **Scope is a gate, not a filter.** Deny-by-default — no authorization, a revoked one, an
+  expired one, or another tenant's one all deny. Every decision lands in `audit_log` before it
+  is returned, and an out-of-scope target leaves no observation and no asset.
+- **Evidence is immutable.** `observation`, `audit_log` and `asset_merge_event` refuse `UPDATE`
+  and `DELETE` at the database. Re-ingesting a capture in the same run adds nothing; a later run
+  is new evidence about the same assets.
+- **Identity is deterministic.** A hard match comes only from `serial`, `cert_fingerprint` or
+  `mac`. Hostnames and IPs are attached but never identify — they rotate. A strong anchor never
+  changes owner: a conflict raises rather than silently re-pointing evidence.
+- **Merges are reversible.** The event and the status change commit together, a reversal is a
+  new event rather than an edit, and an LLM-proposed merge without a rationale is rejected by
+  both the adapter and a `CHECK` constraint. Nothing produces `llm_proposed` yet — the guard is
+  in place before the generator that will need it.
+- **The collector is read-only by construction.** It imports no socket, no subprocess, and no
+  database driver, so extracting it behind an mTLS boundary later is a transport change
+  (`tests/test_adapter_boundaries.py` fails if that decays).
+
+Next: M1 — active scanning under the gentle-profile rules (AGENTS.md §2.7) and credentialed
+collection, which is what supplies the serials and package-manager versions this design is
+waiting for. Deferred by design: RLS, live packet capture, and the `vulnerability_match` /
+`triage_snapshot` / `insight` tables (M2/M3).
