@@ -734,3 +734,104 @@ class ShadowItDiff(BaseModel):
         warranted (m2-design §5). Measured before it is acted on."""
         considered = len(self.assets_considered)
         return len(self.ambiguous_assets) / considered if considered else 0.0
+
+
+# ---------------------------------------------------------------------------
+# m3-design §2 — VulnerabilityFeed operation types (Half A: deterministic only)
+# ---------------------------------------------------------------------------
+
+
+class CvssSeverity(StrEnum):
+    """NVD's qualitative band for a CVSS base score."""
+
+    NONE = "none"
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    CRITICAL = "critical"
+
+
+class CveRecord(BaseModel):
+    """One CVE, normalized away from whatever shape the feed returned it in.
+
+    The point of this model is that the core never learns NVD's JSON. NVD renames things
+    between API versions, nests scores three different ways depending on the CVSS version,
+    and returns fields that are sometimes absent — none of which should reach the
+    correlator (m3-design §2).
+
+    **A record is evidence, and it carries where it came from.** `raw_record_ref` points at
+    the response this was derived from, so a match can always be traced back to what the
+    feed actually said rather than to what we made of it (AGENTS.md §3, raw/normalized).
+
+    Deliberately *not* here: anything about our assets. A CVE record is a fact about
+    software in the world, identical for every tenant, and this model has no place to put a
+    conclusion about a device.
+    """
+
+    cve_id: str
+    source: str = "nvd"
+    description: str = ""
+    published_at: datetime | None = None
+    last_modified_at: datetime | None = None
+    cvss_score: Annotated[float, Field(ge=0.0, le=10.0)] | None = None
+    cvss_vector: str | None = None
+    cvss_version: str | None = None
+    severity: CvssSeverity | None = None
+    #: The CPE criteria NVD says this CVE applies to. Kept as strings: matching them
+    #: against our components is P14's job, and it is deterministic.
+    cpe_criteria: list[str] = Field(default_factory=list)
+    references: list[str] = Field(default_factory=list)
+    fetched_at: datetime  # UTC — when we asked the feed
+    raw_record_ref: str | None = None  # pointer to the response this came from
+
+
+class SkippedRecord(BaseModel):
+    """A feed record we refused. The identifier if we could read one, and why — never the
+    record itself, which is untrusted text (AGENTS.md §2.9)."""
+
+    identifier: str | None
+    reason: str
+
+
+class FeedFetchReport(BaseModel):
+    """What a fetch run did, with every non-fetch made explicit.
+
+    The distinction that matters: `served_from_cache` and `fetched_from_feed` are both
+    successes, and neither is the same as a failure — a failure raises. An empty result set
+    with `queries=1` means the feed genuinely knows of no CVEs; it never means the feed was
+    unreachable (m3-design §2, AGENTS.md §67).
+    """
+
+    queries: int = 0
+    fetched_from_feed: int = 0
+    served_from_cache: int = 0
+    records_normalized: int = 0
+    rate_limited_retries: int = 0
+    skipped: list[SkippedRecord] = Field(default_factory=list)
+
+    @property
+    def skipped_count(self) -> int:
+        return len(self.skipped)
+
+    @property
+    def skip_reasons(self) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for record in self.skipped:
+            counts[record.reason] = counts.get(record.reason, 0) + 1
+        return counts
+
+
+class CveQueryCacheEntry(BaseModel):
+    """What we asked the feed about a CPE, and when.
+
+    Separate from the CVE records themselves for one reason, and it is the reason this
+    table exists: *"we asked about this CPE and the answer was none"* has to be storable.
+    Without it, a CPE with no CVEs is indistinguishable from a CPE nobody ever looked up —
+    and that ambiguity is a false-negative path, because "no rows" would read as "clean".
+    """
+
+    cpe: str
+    source: str
+    cve_ids: list[str]
+    fetched_at: datetime
+    raw_record_ref: str | None = None

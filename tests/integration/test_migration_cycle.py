@@ -32,13 +32,18 @@ EXPAND_TABLES = {
 #: What `0002_software_component` adds — the current-state projection ER writes into.
 SOFTWARE_TABLES = {"software_component"}
 
-EXPECTED_TABLES = EXPAND_TABLES | SOFTWARE_TABLES
+#: What `0003_cve_cache` adds — the local cache of an external vulnerability feed. Neither
+#: table is tenant-scoped: a CVE is a fact about software in the world (m3-design §2).
+CVE_CACHE_TABLES = {"cve_cache", "cve_query_cache"}
 
-#: Still not created by anything — they belong to M2/M3 (data-model.md §5). A table arrives
-#: with the feature that needs it (AGENTS.md §5).
+EXPECTED_TABLES = EXPAND_TABLES | SOFTWARE_TABLES | CVE_CACHE_TABLES
+
+#: Still not created by anything — they arrive with the features that need them
+#: (AGENTS.md §5). `vulnerability_match` is P14's; `triage_snapshot` and `insight` are
+#: Half B's.
 DEFERRED_TABLES = {"vulnerability_match", "triage_snapshot", "insight"}
 
-HEAD_REVISION = "0002_software_component"
+HEAD_REVISION = "0003_cve_cache"
 
 
 def _table_names(url: str) -> set[str]:
@@ -109,9 +114,9 @@ def test_downgrading_one_step_removes_only_the_latest_revision(scratch_database:
     assert alembic("downgrade", "-1", url=scratch_database).returncode == 0
 
     remaining = _table_names(scratch_database)
-    assert remaining & SOFTWARE_TABLES == set()
-    assert remaining >= EXPAND_TABLES
-    assert _current_revision(scratch_database) == "0001_expand"
+    assert remaining & CVE_CACHE_TABLES == set()
+    assert remaining >= EXPAND_TABLES | SOFTWARE_TABLES  # earlier revisions untouched
+    assert _current_revision(scratch_database) == "0002_software_component"
 
 
 def test_upgrade_is_recorded_at_the_expected_revision(scratch_database: str) -> None:

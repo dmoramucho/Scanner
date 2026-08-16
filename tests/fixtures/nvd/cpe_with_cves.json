@@ -1,0 +1,196 @@
+{
+ "resultsPerPage": 3,
+ "startIndex": 0,
+ "totalResults": 3,
+ "format": "NVD_CVE",
+ "version": "2.0",
+ "timestamp": "2026-08-16T12:00:00.000",
+ "vulnerabilities": [
+  {
+   "cve": {
+    "id": "CVE-2024-27316",
+    "sourceIdentifier": "cve@mitre.org",
+    "published": "2024-01-15T10:15:07.000",
+    "lastModified": "2024-06-02T08:11:00.000",
+    "vulnStatus": "Analyzed",
+    "descriptions": [
+     {
+      "lang": "es",
+      "value": "Descripci\u00f3n de CVE-2024-27316"
+     },
+     {
+      "lang": "en",
+      "value": "A flaw in the widget handler of CVE-2024-27316 allows a remote attacker to do a bad thing."
+     }
+    ],
+    "metrics": {
+     "cvssMetricV31": [
+      {
+       "source": "nvd@nist.gov",
+       "type": "Primary",
+       "cvssData": {
+        "version": "3.1",
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+        "baseScore": 7.5,
+        "baseSeverity": "HIGH"
+       },
+       "exploitabilityScore": 3.9,
+       "impactScore": 3.6
+      }
+     ]
+    },
+    "references": [
+     {
+      "url": "https://httpd.apache.org/security/vulnerabilities_24.html",
+      "source": "cve@mitre.org"
+     },
+     {
+      "url": "not-a-url",
+      "source": "junk"
+     }
+    ],
+    "configurations": [
+     {
+      "nodes": [
+       {
+        "operator": "OR",
+        "negate": false,
+        "cpeMatch": [
+         {
+          "vulnerable": true,
+          "criteria": "cpe:2.3:a:apache:http_server:2.4.52:*:*:*:*:*:*:*",
+          "matchCriteriaId": "X"
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "cve": {
+    "id": "CVE-2023-45802",
+    "sourceIdentifier": "cve@mitre.org",
+    "published": "2024-01-15T10:15:07.000",
+    "lastModified": "2024-06-02T08:11:00.000",
+    "vulnStatus": "Analyzed",
+    "descriptions": [
+     {
+      "lang": "es",
+      "value": "Descripci\u00f3n de CVE-2023-45802"
+     },
+     {
+      "lang": "en",
+      "value": "A flaw in the widget handler of CVE-2023-45802 allows a remote attacker to do a bad thing."
+     }
+    ],
+    "metrics": {
+     "cvssMetricV30": [
+      {
+       "source": "nvd@nist.gov",
+       "type": "Primary",
+       "cvssData": {
+        "version": "3.1",
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+        "baseScore": 5.9,
+        "baseSeverity": "MEDIUM"
+       },
+       "exploitabilityScore": 3.9,
+       "impactScore": 3.6
+      }
+     ]
+    },
+    "references": [
+     {
+      "url": "https://httpd.apache.org/security/vulnerabilities_24.html",
+      "source": "cve@mitre.org"
+     },
+     {
+      "url": "not-a-url",
+      "source": "junk"
+     }
+    ],
+    "configurations": [
+     {
+      "nodes": [
+       {
+        "operator": "OR",
+        "negate": false,
+        "cpeMatch": [
+         {
+          "vulnerable": true,
+          "criteria": "cpe:2.3:a:apache:http_server:2.4.52:*:*:*:*:*:*:*",
+          "matchCriteriaId": "X"
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "cve": {
+    "id": "CVE-2006-20001",
+    "sourceIdentifier": "cve@mitre.org",
+    "published": "2024-01-15T10:15:07.000",
+    "lastModified": "2024-06-02T08:11:00.000",
+    "vulnStatus": "Analyzed",
+    "descriptions": [
+     {
+      "lang": "es",
+      "value": "Descripci\u00f3n de CVE-2006-20001"
+     },
+     {
+      "lang": "en",
+      "value": "A flaw in the widget handler of CVE-2006-20001 allows a remote attacker to do a bad thing."
+     }
+    ],
+    "metrics": {
+     "cvssMetricV2": [
+      {
+       "source": "nvd@nist.gov",
+       "type": "Primary",
+       "cvssData": {
+        "version": "3.1",
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+        "baseScore": 7.5,
+        "baseSeverity": "HIGH"
+       },
+       "exploitabilityScore": 3.9,
+       "impactScore": 3.6
+      }
+     ]
+    },
+    "references": [
+     {
+      "url": "https://httpd.apache.org/security/vulnerabilities_24.html",
+      "source": "cve@mitre.org"
+     },
+     {
+      "url": "not-a-url",
+      "source": "junk"
+     }
+    ],
+    "configurations": [
+     {
+      "nodes": [
+       {
+        "operator": "OR",
+        "negate": false,
+        "cpeMatch": [
+         {
+          "vulnerable": true,
+          "criteria": "cpe:2.3:a:apache:http_server:2.4.52:*:*:*:*:*:*:*",
+          "matchCriteriaId": "X"
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  }
+ ]
+}

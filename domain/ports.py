@@ -21,7 +21,10 @@ from domain.models import (
     AssetAnchorSet,
     AssetResolution,
     AssetView,
+    CveQueryCacheEntry,
+    CveRecord,
     DeviceFingerprint,
+    FeedFetchReport,
     InsightProposal,
     InspectionResult,
     IPAddress,
@@ -227,6 +230,78 @@ class ManagedRecordSink(Protocol):
 
     def record_batch(self, batch: Sequence[ManagedRecordInput]) -> list[ManagedRecordResult]:
         """Batch variant; per-item idempotency, results in input order."""
+        ...
+
+
+class VulnerabilityFeed(Protocol):
+    """Where CVE knowledge comes from — and the only place it may come from.
+
+    The core never learns that this is NVD (m3-design §2). More importantly, it never
+    learns CVE facts from a model: an LLM's CVE knowledge is stale and hallucinated CVE ids
+    are its most characteristic failure (AGENTS.md §4.8). Every match the correlator makes
+    traces back through this port to a feed that actually said so.
+
+    **An empty answer and a failure are different things.** `cves_for_cpe` returning an
+    empty sequence means the feed knows of no CVEs for that CPE — a real finding. A feed
+    that could not be reached raises `DependencyError` instead, because a silent empty here
+    would later read as "this component is clean" (AGENTS.md §67).
+    """
+
+    def cves_for_cpe(self, cpe: str) -> Sequence[CveRecord]:
+        """Every CVE the feed associates with this CPE.
+
+        Raises `ValidationError` for a CPE that is not a CPE, and `DependencyError` when
+        the feed fails — `retryable=True` for a timeout, a 429, or a 5xx, `False` for
+        something that will fail identically next time.
+        """
+        ...
+
+    def cve(self, cve_id: str) -> CveRecord | None:
+        """One CVE by id, or None if the feed does not know it."""
+        ...
+
+    def fetch_report(self) -> FeedFetchReport:
+        """What the fetches since construction did, including records refused and why.
+
+        Call after fetching. As with `ManagedSource.read_report`, this exists so that
+        "never silently drop a record" is verifiable by the caller rather than promised by
+        the adapter (AGENTS.md §4.4).
+        """
+        ...
+
+
+class CveCache(Protocol):
+    """The local persistence of what a feed told us — the raw/normalized split applied to
+    an external source (AGENTS.md §3, m3-design §2).
+
+    It exists so we do not re-ask NVD for something it already answered: NVD is slow and
+    rate-limited, and a correlation run over a few hundred components would otherwise take
+    hours and risk a ban.
+
+    Note it is **not tenant-scoped**. A CVE is a fact about software in the world, identical
+    for every tenant; scoping it per tenant would multiply the fetching by the number of
+    tenants for no gain. Nothing tenant-specific is stored here — the conclusions about
+    *our* devices live in `vulnerability_match`, which is tenant-scoped.
+    """
+
+    def query_entry(self, source: str, cpe: str) -> CveQueryCacheEntry | None:
+        """What we last asked this feed about this CPE, or None if we never have.
+
+        The distinction this method exists for: a stored entry with no CVE ids means the
+        feed said "none", which is an answer worth caching. `None` means we never asked.
+        """
+        ...
+
+    def records(self, source: str, cve_ids: Sequence[str]) -> Sequence[CveRecord]:
+        """The cached records for these ids, in whatever order the store returns them."""
+        ...
+
+    def store(self, records: Sequence[CveRecord]) -> int:
+        """Persist normalized records, idempotently. Returns how many were new."""
+        ...
+
+    def store_query(self, entry: CveQueryCacheEntry) -> None:
+        """Record that we asked about a CPE, and what came back — including nothing."""
         ...
 
 

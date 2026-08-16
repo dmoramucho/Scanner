@@ -1,0 +1,95 @@
+{
+ "totalResults": 6,
+ "vulnerabilities": [
+  {
+   "cve": {
+    "id": "",
+    "descriptions": []
+   }
+  },
+  {
+   "cve": {
+    "id": "NOT-A-CVE-ID",
+    "descriptions": []
+   }
+  },
+  {
+   "nope": {}
+  },
+  "a bare string where an object should be",
+  {
+   "cve": {
+    "id": "CVE-2024-99999",
+    "descriptions": "not a list",
+    "metrics": "not an object",
+    "configurations": {
+     "nodes": "not a list"
+    },
+    "references": "not a list",
+    "published": "not a date"
+   }
+  },
+  {
+   "cve": {
+    "id": "CVE-2024-27316",
+    "sourceIdentifier": "cve@mitre.org",
+    "published": "2024-01-15T10:15:07.000",
+    "lastModified": "2024-06-02T08:11:00.000",
+    "vulnStatus": "Analyzed",
+    "descriptions": [
+     {
+      "lang": "es",
+      "value": "Descripci\u00f3n de CVE-2024-27316"
+     },
+     {
+      "lang": "en",
+      "value": "A flaw in the widget handler of CVE-2024-27316 allows a remote attacker to do a bad thing."
+     }
+    ],
+    "metrics": {
+     "cvssMetricV31": [
+      {
+       "source": "nvd@nist.gov",
+       "type": "Primary",
+       "cvssData": {
+        "version": "3.1",
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+        "baseScore": 7.5,
+        "baseSeverity": "HIGH"
+       },
+       "exploitabilityScore": 3.9,
+       "impactScore": 3.6
+      }
+     ]
+    },
+    "references": [
+     {
+      "url": "https://httpd.apache.org/security/vulnerabilities_24.html",
+      "source": "cve@mitre.org"
+     },
+     {
+      "url": "not-a-url",
+      "source": "junk"
+     }
+    ],
+    "configurations": [
+     {
+      "nodes": [
+       {
+        "operator": "OR",
+        "negate": false,
+        "cpeMatch": [
+         {
+          "vulnerable": true,
+          "criteria": "cpe:2.3:a:apache:http_server:2.4.52:*:*:*:*:*:*:*",
+          "matchCriteriaId": "X"
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  }
+ ]
+}

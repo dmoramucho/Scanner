@@ -11,6 +11,10 @@ dependencies = [
     "defusedxml>=0.7.1,<0.8",
     # SSH transport for the credentialed inspector: keeps the credential in memory only,
     # which a subprocess `ssh` would not (ADR-0005).
+    # HTTP client for the NVD feed: bundles its own CA trust (so certificate verification
+    # does not depend on the host's Python TLS store), decompresses gzip transparently, and
+    # requires an explicit timeout. Behind a seam either way — ADR-0010.
+    "httpx>=0.27,<0.29",
     "openpyxl>=3.1,<4",
     "paramiko>=3.4,<4",
     "psycopg[binary]>=3.2,<4",

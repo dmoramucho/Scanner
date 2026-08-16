@@ -25,6 +25,7 @@ unmanaged-device (shadow-IT) diff, confidence-based noise reduction, and grounde
 | `adapters/inspector/` | Credentialed reads over SSH — read-only, allow-listed commands, credential-safe |
 | `adapters/probe/` | The circuit breaker's health check: one TCP connect, no data, no root |
 | `adapters/managed/` | Authoritative inventory: the CMDB CSV/Excel reader, untrusted-file-safe |
+| `adapters/feed/` | Vulnerability feeds: the NVD API, rate-limited and cached. No model, ever |
 | `engine/` | Orchestration; the scope gate runs before anything is recorded, and the scan-safety policy lives here |
 | `config/` | Startup configuration — validated once, fail-fast |
 | `migrations/` | Alembic revisions — hand-written raw SQL, no ORM ([how](migrations/README.md)) |
@@ -83,7 +84,7 @@ secret is actually used.
 
 ## Status
 
-**M0, M1 and M2 complete (P1–P11).** A capture goes end to end: parsers turn an ARP
+**M0, M1 and M2 complete (P1–P11); M3 in progress (P12).** A capture goes end to end: parsers turn an ARP
 table, DHCP leases, or mDNS output into provenance-complete observations; the engine calls
 `require_authorized` on every target *before* anything is recorded; the sink writes them
 idempotently into the append-only spine; entity resolution collapses them into assets by stable
@@ -125,6 +126,13 @@ What the system guarantees, each proven by tests:
 - **A failure is never an empty success.** A missing binary, non-zero exit, timeout, or
   unparseable output raises a specific domain error; "host is down" is a distinct, explicit
   result.
+- **A feed failure is never an empty answer.** NVD returning "no CVEs for this CPE" is a
+  finding and is cached as one; NVD timing out, rate-limiting, or returning a proxy error page
+  raises instead. Collapsing the two would make a component read as clean when nobody had
+  checked it — a false negative the system would have created (ADR-0010).
+- **CVE knowledge only ever comes from a feed.** Nothing in `adapters/feed/` imports a model
+  client, asserted by `tests/test_adapter_boundaries.py`: an LLM's CVE knowledge is stale and
+  hallucinated CVE ids are its most characteristic failure (AGENTS.md §4.8).
 - **The shadow-IT number never overclaims.** A CMDB record matches an asset by the same anchor
   priority the ER uses (`serial › mac › hostname`); anything unresolved — two devices with one
   name, strong anchors that disagree, a name that only matches once punctuation is deleted, an
@@ -171,7 +179,13 @@ CMDB and check the shadow-IT list is genuinely unregistered devices rather than 
 failures. The second also measures the **ambiguous rate**, which is the evidence for whether M3's
 LLM proposer is warranted at all — measured, not assumed (AGENTS.md §4.11).
 
-Next (M3): CPE→CVE correlation with NVD/KEV/EPSS, the triage dossier, and the grounded insight
-generator — plus, if the measured rate justifies it, an LLM proposer for the ambiguous queue
-through the existing propose/dispose pattern. Deferred by design: vendor inspectors (VAPIX, ISAPI, BusyBox), RLS, live packet
+**M3 is deliberately split in two** (m3-design §1). Half A is deterministic — CPE→CVE from NVD,
+enriched with KEV and EPSS — and no model runs anywhere in it. Half B adds grounded, cited,
+advisory AI insight *on top of* matches Half A already made, and only after Half A is verified.
+The separation is a safety barrier, not organisation: it is what makes it structurally impossible
+for a model to decide that a vulnerability exists.
+
+P12 delivered the first piece: the `VulnerabilityFeed` port and its NVD adapter, fetching and
+caching only. Next: P13 (KEV + EPSS), P14 (deterministic correlation into `vulnerability_match`,
+confidence-stratified by `version_source`), then Half B. Deferred by design: vendor inspectors (VAPIX, ISAPI, BusyBox), RLS, live packet
 capture, default-credential probing, and any form of exploitation (never).

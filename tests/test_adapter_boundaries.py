@@ -21,6 +21,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 COLLECTOR_ROOT = REPO_ROOT / "adapters" / "collector"
 SCANNER_ROOT = REPO_ROOT / "adapters" / "scanner"
+FEED_ROOT = REPO_ROOT / "adapters" / "feed"
 
 #: Importing any of these from the collector would break a stated guarantee, whatever the
 #: intent: the first three reach the outside world, the rest reach the store.
@@ -32,6 +33,26 @@ ALLOWED_ROOTS = frozenset(sys.stdlib_module_names) | {"domain", "adapters"}
 
 COLLECTOR_MODULES = sorted(COLLECTOR_ROOT.rglob("*.py"))
 SCANNER_MODULES = sorted(SCANNER_ROOT.rglob("*.py"))
+FEED_MODULES = sorted(FEED_ROOT.rglob("*.py"))
+
+#: Half A of M3 is deterministic by construction (m3-design §1). A model's CVE knowledge is
+#: stale and hallucinated CVE ids are its most characteristic failure (AGENTS.md §4.8), so
+#: the feed must never acquire one — not even "just to summarise a description".
+MODEL_PACKAGES = frozenset(
+    {
+        "openai",
+        "anthropic",
+        "transformers",
+        "torch",
+        "llama_cpp",
+        "ollama",
+        "langchain",
+        "sentence_transformers",
+        "google",
+        "cohere",
+        "mistralai",
+    }
+)
 
 
 def imported_roots(module_path: Path) -> list[tuple[str, int]]:
@@ -101,3 +122,24 @@ def test_the_scanner_never_reaches_for_a_shell(module_path: Path) -> None:
     assert "shell=True" not in source
     assert "os.system" not in source
     assert "os.popen" not in source
+
+
+@pytest.mark.parametrize("module_path", FEED_MODULES, ids=lambda p: p.name)
+def test_the_vulnerability_feed_imports_no_model(module_path: Path) -> None:
+    """The safety assertion m3-design §4 asks for: no code path in Half A can produce a CVE
+    from anything but the deterministic feed. An LLM client in this package would be the
+    way that stops being true."""
+    imported = {root for root, _ in imported_roots(module_path)}
+
+    assert imported & MODEL_PACKAGES == set()
+
+
+@pytest.mark.parametrize("module_path", FEED_MODULES, ids=lambda p: p.name)
+def test_the_vulnerability_feed_stays_out_of_the_store(module_path: Path) -> None:
+    """The feed fetches; the cache persists. Keeping psycopg out of here is what makes the
+    NVD adapter testable without a database, and what keeps one class from being both the
+    thing that talks to the internet and the thing that writes rows."""
+    imported = {root for root, _ in imported_roots(module_path)}
+
+    assert "psycopg" not in imported
+    assert "adapters.postgres" not in module_path.read_text(encoding="utf-8")

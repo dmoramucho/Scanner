@@ -45,10 +45,51 @@ REQUIRED_KEYS: Final = (
 )
 
 #: Safe to default: neither choice weakens security.
+#:
+#: The NVD settings live here because every one of them has a defensible default — the
+#: public endpoint, and the rate limit NVD documents for *unauthenticated* callers, which is
+#: the conservative choice. An operator with an API key raises the limit deliberately
+#: (m3-design §2: respect the rate limit; never hammer NVD).
 OPTIONAL_DEFAULTS: Final[Mapping[str, str]] = {
     "SCANNER_REGION": "us-east-1",
     "SCANNER_LOG_LEVEL": "INFO",
+    "SCANNER_NVD_BASE_URL": "https://services.nvd.nist.gov/rest/json/cves/2.0",
+    # NVD documents 5 requests / 30 s without an API key, 50 with one. Defaulting to the
+    # unauthenticated limit means a missing key costs throughput, never a rate-limit ban.
+    "SCANNER_NVD_RATE_LIMIT_REQUESTS": "5",
+    "SCANNER_NVD_RATE_LIMIT_WINDOW_SECONDS": "30",
+    "SCANNER_NVD_TIMEOUT_SECONDS": "30",
+    "SCANNER_NVD_MAX_RETRIES": "3",
+    # A CVE record changes rarely; re-asking NVD for the same CPE inside a day is rude and
+    # slow. Long enough to be kind to the feed, short enough that a new CVE lands the next
+    # working day.
+    "SCANNER_NVD_CACHE_TTL_HOURS": "24",
 }
+
+
+@dataclass(frozen=True, slots=True)
+class NvdSettings:
+    """How we talk to NVD: where, how fast, and how long we trust what it told us.
+
+    Every field is configuration rather than a constant because NVD's limits differ with
+    and without an API key, and an operator behind a slow link needs a longer timeout than
+    a default we invented (m3-design §2).
+    """
+
+    base_url: str
+    #: Optional: NVD works without one, ten times slower. A `Secret` because it is a
+    #: credential, even a low-value one (AGENTS.md §2.10).
+    api_key: Secret | None
+    rate_limit_requests: int
+    rate_limit_window_seconds: float
+    timeout_seconds: float
+    max_retries: int
+    cache_ttl_hours: float
+
+    @property
+    def min_request_interval_seconds(self) -> float:
+        """The gap the adapter keeps between requests to stay inside the cap."""
+        return self.rate_limit_window_seconds / self.rate_limit_requests
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +106,7 @@ class AppConfig:
     secrets_endpoint_url: str  # the in-perimeter vault behind SecretsPort
     region: str
     log_level: str
+    nvd: NvdSettings
 
 
 def load_config(env: Mapping[str, str] | None = None) -> AppConfig:
@@ -95,6 +137,17 @@ def load_config(env: Mapping[str, str] | None = None) -> AppConfig:
             f"SCANNER_ENV must be one of {', '.join(ENVIRONMENTS)}; got {environment!r}"
         )
 
+    def positive_number(key: str) -> float:
+        """A number an operator can get wrong in exactly two ways: unparseable, or zero."""
+        raw = optional(key)
+        try:
+            value = float(raw)
+        except ValueError as exc:
+            raise ConfigError(f"{key} must be a number; got {raw!r}") from exc
+        if value <= 0:
+            raise ConfigError(f"{key} must be greater than zero; got {value}")
+        return value
+
     log_level = optional("SCANNER_LOG_LEVEL").upper()
     if log_level not in LOG_LEVELS:
         raise ConfigError(
@@ -111,4 +164,17 @@ def load_config(env: Mapping[str, str] | None = None) -> AppConfig:
         secrets_endpoint_url=source["SCANNER_SECRETS_ENDPOINT_URL"].strip(),
         region=optional("SCANNER_REGION"),
         log_level=log_level,
+        nvd=NvdSettings(
+            base_url=optional("SCANNER_NVD_BASE_URL"),
+            api_key=(
+                Secret(source["SCANNER_NVD_API_KEY"].strip())
+                if source.get("SCANNER_NVD_API_KEY", "").strip()
+                else None
+            ),
+            rate_limit_requests=int(positive_number("SCANNER_NVD_RATE_LIMIT_REQUESTS")),
+            rate_limit_window_seconds=positive_number("SCANNER_NVD_RATE_LIMIT_WINDOW_SECONDS"),
+            timeout_seconds=positive_number("SCANNER_NVD_TIMEOUT_SECONDS"),
+            max_retries=int(positive_number("SCANNER_NVD_MAX_RETRIES")),
+            cache_ttl_hours=positive_number("SCANNER_NVD_CACHE_TTL_HOURS"),
+        ),
     )
