@@ -30,13 +30,12 @@ No model, no LLM, no inference: Half A is deterministic by construction, and
 
 from __future__ import annotations
 
-import json
 import time
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Final, Protocol
+from typing import Final
 
+from adapters.feed.http import MAX_RESPONSE_BYTES, HttpClient, HttpResponse, HttpxClient
 from domain.errors import DependencyError, ValidationError
 from domain.models import (
     CveQueryCacheEntry,
@@ -52,83 +51,12 @@ SOURCE: Final = "nvd"
 #: NVD's own cap on results per page. Asking for more is refused by the API.
 MAX_RESULTS_PER_PAGE: Final = 2000
 
-#: Past this, the response is not an answer, it is a denial of service. NVD's largest
-#: legitimate single-CPE responses are orders of magnitude smaller.
-MAX_RESPONSE_BYTES: Final = 32 * 1024 * 1024
-
 MAX_DESCRIPTION_LENGTH: Final = 4000
 MAX_REFERENCES: Final = 50
 MAX_CPE_CRITERIA: Final = 500
 
 #: Statuses that mean "ask again later" rather than "this will always fail".
 RETRYABLE_STATUSES: Final = frozenset({429, 500, 502, 503, 504})
-
-
-@dataclass(frozen=True, slots=True)
-class HttpResponse:
-    """The little of an HTTP response this adapter needs."""
-
-    status_code: int
-    body: bytes
-    headers: Mapping[str, str]
-
-    def json(self) -> object:
-        """Parse the body, or raise `ValueError`.
-
-        Returns `object`, not `Any`: the payload is untrusted, and a type that forces every
-        field access through an `isinstance` check is the point rather than an inconvenience
-        (AGENTS.md §2.9).
-        """
-        parsed: object = json.loads(self.body)
-        return parsed
-
-
-class HttpClient(Protocol):
-    """The network seam. One GET, no redirects to follow, no session state.
-
-    Everything about NVD's behaviour that matters — rate limits, retries, backoff — is
-    implemented above this, so it is all testable without a network (AGENTS.md §43).
-    """
-
-    def get(
-        self, url: str, *, params: Mapping[str, str], headers: Mapping[str, str], timeout: float
-    ) -> HttpResponse:
-        """Perform the request. Raises `OSError` (or a subclass) on a transport failure."""
-        ...
-
-
-class HttpxClient:
-    """The real client.
-
-    httpx is used for three properties rather than for convenience: it ships its own CA
-    bundle (so certificate verification does not depend on the host's Python TLS store), it
-    decompresses gzip transparently (NVD responses are large), and it requires an explicit
-    timeout rather than defaulting to none (ADR-0010).
-    """
-
-    def get(
-        self, url: str, *, params: Mapping[str, str], headers: Mapping[str, str], timeout: float
-    ) -> HttpResponse:
-        import httpx
-
-        try:
-            response = httpx.get(
-                url,
-                params=dict(params),
-                headers=dict(headers),
-                timeout=timeout,
-                follow_redirects=False,
-            )
-        except httpx.HTTPError as exc:
-            # Normalised to OSError so the seam has one failure type and a fake does not
-            # have to import httpx to imitate it.
-            raise OSError(f"nvd request failed: {type(exc).__name__}") from exc
-
-        return HttpResponse(
-            status_code=response.status_code,
-            body=response.content[: MAX_RESPONSE_BYTES + 1],
-            headers={key.lower(): value for key, value in response.headers.items()},
-        )
 
 
 class NvdVulnerabilityFeed:

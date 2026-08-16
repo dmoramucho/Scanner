@@ -835,3 +835,62 @@ class CveQueryCacheEntry(BaseModel):
     cve_ids: list[str]
     fetched_at: datetime
     raw_record_ref: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# m3-design §2 — KEV and EPSS, the two prioritisation signals
+# ---------------------------------------------------------------------------
+
+
+class KevEntry(BaseModel):
+    """One CVE that CISA says is being exploited in the wild.
+
+    The single most valuable prioritisation signal in the system: a KEV listing is the
+    override that keeps a finding visible regardless of how confident the version match was
+    (dossier contract §7). Everything else ranks; this one insists.
+    """
+
+    cve_id: str
+    source: str = "cisa_kev"
+    vendor: str | None = None
+    product: str | None = None
+    name: str | None = None  # CISA's short title for the vulnerability
+    date_added: datetime | None = None  # when CISA added it to the catalog
+    due_date: datetime | None = None  # the federal remediation deadline
+    known_ransomware: bool | None = None  # CISA's "used in ransomware campaigns" flag
+    fetched_at: datetime  # UTC
+    raw_record_ref: str | None = None
+
+
+class EpssScore(BaseModel):
+    """The probability that a CVE will be exploited in the next 30 days, per FIRST.
+
+    The gradient that ranks everything KEV does not flag. `score` and `percentile` are both
+    0–1; a CVE with no score is a real answer (FIRST has not scored it), and is not the same
+    as a fetch that failed.
+    """
+
+    cve_id: str
+    source: str = "epss"
+    score: Annotated[float, Field(ge=0.0, le=1.0)]
+    percentile: Annotated[float, Field(ge=0.0, le=1.0)] | None = None
+    model_version: str | None = None  # the EPSS model that produced it
+    scored_at: datetime | None = None  # the snapshot date FIRST published
+    fetched_at: datetime  # UTC
+    raw_record_ref: str | None = None
+
+
+class FeedSnapshot(BaseModel):
+    """A record that we loaded a whole catalog, and when.
+
+    This is the same structural idea as `CveQueryCacheEntry`, applied to a bulk source: it
+    is what makes *"this CVE is not in KEV"* a storable answer rather than an absence
+    indistinguishable from "we never loaded the catalog". Without it, a failed refresh would
+    make every CVE look un-exploited — the worst false negative this system could produce
+    (AGENTS.md §4.9, §67).
+    """
+
+    source: str
+    fetched_at: datetime  # UTC
+    record_count: int = 0
+    raw_record_ref: str | None = None

@@ -17,11 +17,8 @@ from pathlib import Path
 
 import pytest
 
-from adapters.feed.nvd import (
-    RETRYABLE_STATUSES,
-    HttpResponse,
-    NvdVulnerabilityFeed,
-)
+from adapters.feed.http import HttpResponse
+from adapters.feed.nvd import RETRYABLE_STATUSES, NvdVulnerabilityFeed
 from domain.errors import DependencyError, ValidationError
 from domain.models import CveQueryCacheEntry, CveRecord, CvssSeverity
 from domain.ports import VulnerabilityFeed
@@ -218,7 +215,7 @@ def test_an_unrecognised_response_shape_raises_rather_than_reporting_none() -> N
 
 
 def test_an_oversized_response_is_refused() -> None:
-    from adapters.feed.nvd import MAX_RESPONSE_BYTES
+    from adapters.feed.http import MAX_RESPONSE_BYTES
 
     huge = ok(b"{" + b"x" * (MAX_RESPONSE_BYTES + 10))
 

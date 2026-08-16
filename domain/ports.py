@@ -24,10 +24,13 @@ from domain.models import (
     CveQueryCacheEntry,
     CveRecord,
     DeviceFingerprint,
+    EpssScore,
     FeedFetchReport,
+    FeedSnapshot,
     InsightProposal,
     InspectionResult,
     IPAddress,
+    KevEntry,
     ManagedRecordInput,
     ManagedRecordResult,
     ManagedRecordSnapshot,
@@ -302,6 +305,97 @@ class CveCache(Protocol):
 
     def store_query(self, entry: CveQueryCacheEntry) -> None:
         """Record that we asked about a CPE, and what came back — including nothing."""
+        ...
+
+
+class KevSource(Protocol):
+    """Is this CVE being exploited in the wild? (CISA KEV, m3-design §2.)
+
+    The most consequential boolean in the product. A `True` promotes a finding past every
+    other consideration; a `False` lets it be ranked normally. Which is why the third
+    outcome must never be silently folded into the second:
+
+    **A lookup that could not be performed raises.** If a failed catalog fetch returned
+    `False`, an actively-exploited vulnerability would be quietly de-prioritised — the worst
+    false negative this system could produce (AGENTS.md §4.9). "Not listed" and "we could
+    not check" are different answers and this port keeps them different.
+    """
+
+    def is_known_exploited(self, cve_id: str) -> bool:
+        """True if CISA lists this CVE as exploited in the wild.
+
+        Raises `DependencyError` when the catalog cannot be loaded — never `False`.
+        """
+        ...
+
+    def entry(self, cve_id: str) -> KevEntry | None:
+        """The catalog entry, with its dates and ransomware flag, or None if not listed."""
+        ...
+
+    def refresh(self) -> FeedFetchReport:
+        """Reload the catalog now, whatever the cache says. For a scheduler or an operator."""
+        ...
+
+    def fetch_report(self) -> FeedFetchReport:
+        """What the loads since construction did, including entries refused and why."""
+        ...
+
+
+class EpssSource(Protocol):
+    """How likely is this CVE to be exploited? (EPSS, m3-design §2.)
+
+    Same discipline as `KevSource`, one step softer in consequence: `None` means FIRST has
+    not scored this CVE, which is a real answer about a real absence. A snapshot that could
+    not be fetched raises instead, because "no score" and "we do not know" would otherwise
+    rank identically.
+    """
+
+    def score_for(self, cve_id: str) -> EpssScore | None:
+        """The EPSS score, or None if FIRST has no score for this CVE.
+
+        Raises `DependencyError` when the snapshot cannot be loaded — never `None`.
+        """
+        ...
+
+    def refresh(self) -> FeedFetchReport:
+        """Reload the current snapshot now, whatever the cache says."""
+        ...
+
+    def fetch_report(self) -> FeedFetchReport:
+        """What the loads since construction did, including rows refused and why."""
+        ...
+
+
+class KevCache(Protocol):
+    """Local persistence of the KEV catalog.
+
+    `snapshot` is the load marker: `None` means the catalog has never been loaded, which is
+    why a lookup against an empty cache must fetch rather than answer "not listed".
+    """
+
+    def snapshot(self, source: str) -> FeedSnapshot | None: ...
+
+    def entry(self, source: str, cve_id: str) -> KevEntry | None: ...
+
+    def replace(self, source: str, entries: Sequence[KevEntry], snapshot: FeedSnapshot) -> int:
+        """Swap the whole catalog for this one, atomically. Returns how many entries landed.
+
+        Replacement rather than accumulation because CISA does remove entries, and a
+        catalog we only ever added to would keep asserting an exploitation that CISA has
+        withdrawn.
+        """
+        ...
+
+
+class EpssCache(Protocol):
+    """Local persistence of an EPSS snapshot. Same shape, same load-marker discipline."""
+
+    def snapshot(self, source: str) -> FeedSnapshot | None: ...
+
+    def score(self, source: str, cve_id: str) -> EpssScore | None: ...
+
+    def replace(self, source: str, scores: Sequence[EpssScore], snapshot: FeedSnapshot) -> int:
+        """Swap the whole snapshot for this one, atomically. Returns how many scores landed."""
         ...
 
 

@@ -16,7 +16,8 @@ from typing import Any
 import psycopg
 import pytest
 
-from adapters.feed.nvd import HttpResponse, NvdVulnerabilityFeed
+from adapters.feed.http import HttpResponse
+from adapters.feed.nvd import NvdVulnerabilityFeed
 from adapters.postgres.cve_cache import PostgresCveCache
 from domain.models import CveQueryCacheEntry, CveRecord, CvssSeverity
 

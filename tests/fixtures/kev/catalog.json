@@ -1,0 +1,53 @@
+{
+ "title": "CISA Catalog of Known Exploited Vulnerabilities",
+ "catalogVersion": "2026.08.14",
+ "dateReleased": "2026-08-14T13:00:00.0000Z",
+ "count": 3,
+ "vulnerabilities": [
+  {
+   "cveID": "CVE-2024-27316",
+   "vendorProject": "Apache",
+   "product": "HTTP Server",
+   "vulnerabilityName": "Apache HTTP Server HTTP/2 DoS",
+   "dateAdded": "2024-04-04",
+   "shortDescription": "HTTP Server contains a flaw.",
+   "requiredAction": "Apply mitigations per vendor instructions.",
+   "dueDate": "2024-04-25",
+   "knownRansomwareCampaignUse": "Known",
+   "notes": "https://example.invalid/advisory",
+   "cwes": [
+    "CWE-22"
+   ]
+  },
+  {
+   "cveID": "CVE-2021-44228",
+   "vendorProject": "Apache",
+   "product": "Log4j2",
+   "vulnerabilityName": "Apache Log4j2 RCE",
+   "dateAdded": "2021-12-10",
+   "shortDescription": "Log4j2 contains a flaw.",
+   "requiredAction": "Apply mitigations per vendor instructions.",
+   "dueDate": "2021-12-24",
+   "knownRansomwareCampaignUse": "Known",
+   "notes": "https://example.invalid/advisory",
+   "cwes": [
+    "CWE-22"
+   ]
+  },
+  {
+   "cveID": "CVE-2023-4966",
+   "vendorProject": "Citrix",
+   "product": "NetScaler ADC",
+   "vulnerabilityName": "Citrix Bleed",
+   "dateAdded": "2023-10-18",
+   "shortDescription": "NetScaler ADC contains a flaw.",
+   "requiredAction": "Apply mitigations per vendor instructions.",
+   "dueDate": "2023-11-08",
+   "knownRansomwareCampaignUse": "Unknown",
+   "notes": "https://example.invalid/advisory",
+   "cwes": [
+    "CWE-22"
+   ]
+  }
+ ]
+}

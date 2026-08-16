@@ -36,14 +36,18 @@ SOFTWARE_TABLES = {"software_component"}
 #: table is tenant-scoped: a CVE is a fact about software in the world (m3-design §2).
 CVE_CACHE_TABLES = {"cve_cache", "cve_query_cache"}
 
-EXPECTED_TABLES = EXPAND_TABLES | SOFTWARE_TABLES | CVE_CACHE_TABLES
+#: What `0004_kev_epss_cache` adds — the two prioritisation signals, and the load marker that
+#: makes "this CVE is not in KEV" distinguishable from "the catalog was never loaded".
+SIGNAL_CACHE_TABLES = {"kev_cache", "epss_cache", "feed_snapshot"}
+
+EXPECTED_TABLES = EXPAND_TABLES | SOFTWARE_TABLES | CVE_CACHE_TABLES | SIGNAL_CACHE_TABLES
 
 #: Still not created by anything — they arrive with the features that need them
 #: (AGENTS.md §5). `vulnerability_match` is P14's; `triage_snapshot` and `insight` are
 #: Half B's.
 DEFERRED_TABLES = {"vulnerability_match", "triage_snapshot", "insight"}
 
-HEAD_REVISION = "0003_cve_cache"
+HEAD_REVISION = "0004_kev_epss_cache"
 
 
 def _table_names(url: str) -> set[str]:
@@ -114,9 +118,10 @@ def test_downgrading_one_step_removes_only_the_latest_revision(scratch_database:
     assert alembic("downgrade", "-1", url=scratch_database).returncode == 0
 
     remaining = _table_names(scratch_database)
-    assert remaining & CVE_CACHE_TABLES == set()
-    assert remaining >= EXPAND_TABLES | SOFTWARE_TABLES  # earlier revisions untouched
-    assert _current_revision(scratch_database) == "0002_software_component"
+    assert remaining & SIGNAL_CACHE_TABLES == set()
+    # earlier revisions untouched
+    assert remaining >= EXPAND_TABLES | SOFTWARE_TABLES | CVE_CACHE_TABLES
+    assert _current_revision(scratch_database) == "0003_cve_cache"
 
 
 def test_upgrade_is_recorded_at_the_expected_revision(scratch_database: str) -> None:

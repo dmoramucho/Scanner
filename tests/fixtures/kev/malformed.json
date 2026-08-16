@@ -1,0 +1,37 @@
+{
+ "count": 6,
+ "vulnerabilities": [
+  {
+   "cveID": "",
+   "product": "nothing"
+  },
+  {
+   "cveID": "NOT-A-CVE",
+   "product": "wrong shape"
+  },
+  {
+   "product": "no id at all"
+  },
+  "a bare string where an object should be",
+  {
+   "cveID": "CVE-2024-27316",
+   "dateAdded": "not-a-date",
+   "knownRansomwareCampaignUse": 42
+  },
+  {
+   "cveID": "CVE-2021-44228",
+   "vendorProject": "Apache",
+   "product": "Log4j2",
+   "vulnerabilityName": "Log4Shell",
+   "dateAdded": "2021-12-10",
+   "shortDescription": "Log4j2 contains a flaw.",
+   "requiredAction": "Apply mitigations per vendor instructions.",
+   "dueDate": "2021-12-24",
+   "knownRansomwareCampaignUse": "Known",
+   "notes": "https://example.invalid/advisory",
+   "cwes": [
+    "CWE-22"
+   ]
+  }
+ ]
+}

@@ -25,7 +25,7 @@ unmanaged-device (shadow-IT) diff, confidence-based noise reduction, and grounde
 | `adapters/inspector/` | Credentialed reads over SSH — read-only, allow-listed commands, credential-safe |
 | `adapters/probe/` | The circuit breaker's health check: one TCP connect, no data, no root |
 | `adapters/managed/` | Authoritative inventory: the CMDB CSV/Excel reader, untrusted-file-safe |
-| `adapters/feed/` | Vulnerability feeds: the NVD API, rate-limited and cached. No model, ever |
+| `adapters/feed/` | Vulnerability feeds: NVD, CISA KEV, EPSS — rate-limited and cached. No model, ever |
 | `engine/` | Orchestration; the scope gate runs before anything is recorded, and the scan-safety policy lives here |
 | `config/` | Startup configuration — validated once, fail-fast |
 | `migrations/` | Alembic revisions — hand-written raw SQL, no ORM ([how](migrations/README.md)) |
@@ -84,7 +84,7 @@ secret is actually used.
 
 ## Status
 
-**M0, M1 and M2 complete (P1–P11); M3 in progress (P12).** A capture goes end to end: parsers turn an ARP
+**M0, M1 and M2 complete (P1–P11); M3 in progress (P12–P13).** A capture goes end to end: parsers turn an ARP
 table, DHCP leases, or mDNS output into provenance-complete observations; the engine calls
 `require_authorized` on every target *before* anything is recorded; the sink writes them
 idempotently into the append-only spine; entity resolution collapses them into assets by stable
@@ -130,6 +130,11 @@ What the system guarantees, each proven by tests:
   finding and is cached as one; NVD timing out, rate-limiting, or returning a proxy error page
   raises instead. Collapsing the two would make a component read as clean when nobody had
   checked it — a false negative the system would have created (ADR-0010).
+- **A KEV lookup never quietly says "not exploited".** `False` means CISA published a catalog we
+  hold and this CVE is not in it; a catalog we could not fetch raises. The same rule as above,
+  applied where it costs the most — silently de-prioritising an actively-exploited vulnerability
+  is the worst thing this system could do (ADR-0011). EPSS carries it one step softer: `None`
+  means FIRST has not scored the CVE, never that we could not ask.
 - **CVE knowledge only ever comes from a feed.** Nothing in `adapters/feed/` imports a model
   client, asserted by `tests/test_adapter_boundaries.py`: an LLM's CVE knowledge is stale and
   hallucinated CVE ids are its most characteristic failure (AGENTS.md §4.8).
@@ -185,7 +190,8 @@ advisory AI insight *on top of* matches Half A already made, and only after Half
 The separation is a safety barrier, not organisation: it is what makes it structurally impossible
 for a model to decide that a vulnerability exists.
 
-P12 delivered the first piece: the `VulnerabilityFeed` port and its NVD adapter, fetching and
-caching only. Next: P13 (KEV + EPSS), P14 (deterministic correlation into `vulnerability_match`,
-confidence-stratified by `version_source`), then Half B. Deferred by design: vendor inspectors (VAPIX, ISAPI, BusyBox), RLS, live packet
+P12 and P13 delivered the three feeds — NVD for the match, CISA KEV for the exploitation
+override, EPSS for the probability gradient — fetching and caching only, no correlation yet.
+Next: P14 (deterministic correlation into `vulnerability_match`, confidence-stratified by
+`version_source`: `package_manager` → confirmed, `banner` → probable), then Half B. Deferred by design: vendor inspectors (VAPIX, ISAPI, BusyBox), RLS, live packet
 capture, default-credential probing, and any form of exploitation (never).
