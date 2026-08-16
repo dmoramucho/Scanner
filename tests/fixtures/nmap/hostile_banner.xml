@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE nmaprun>
+<nmaprun scanner="nmap" args="nmap -sS -sV -oX - 10.10.5.44" start="1786622800" version="7.94" xmloutputversion="1.05">
+<host starttime="1786622800" endtime="1786622810">
+<status state="up" reason="syn-ack"/>
+<address addr="10.10.5.44" addrtype="ipv4"/>
+<ports>
+<port protocol="tcp" portid="80"><state state="open" reason="syn-ack"/><service name="http" product="Evil&#9;Server&#10;X" version="1.0 &lt;script&gt;alert(1)&lt;/script&gt;" method="probed" conf="10"/></port>
+<port protocol="tcp" portid="99999"><state state="open" reason="syn-ack"/><service name="bogus" method="table" conf="3"/></port>
+<port protocol="sctp" portid="80"><state state="open" reason="syn-ack"/><service name="odd" method="table" conf="3"/></port>
+<port protocol="tcp" portid="notanumber"><state state="open" reason="syn-ack"/><service name="nope" method="table" conf="3"/></port>
+</ports>
+</host>
+<runstats><finished time="1786622810" elapsed="10.0" summary="Nmap done" exit="success"/><hosts up="1" down="0" total="1"/></runstats>
+</nmaprun>

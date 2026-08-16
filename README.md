@@ -20,6 +20,7 @@ unmanaged-device (shadow-IT) diff, confidence-based noise reduction, and grounde
 | `domain/` | The deterministic core: models, ports, errors. **stdlib + pydantic only** |
 | `adapters/postgres/` | `ScopeAuthority`, `ObservationSink`, `AssetRepository` over Postgres — the only place psycopg lives |
 | `adapters/collector/` | Passive discovery (ARP / DHCP / mDNS). Read-only and store-free by construction |
+| `adapters/scanner/` | Active scanning: the nmap orchestrator. The only place that knows what a scanner flag is |
 | `engine/` | Orchestration; the scope gate runs before anything is recorded |
 | `config/` | Startup configuration — validated once, fail-fast |
 | `migrations/` | Alembic revisions — hand-written raw SQL, no ORM ([how](migrations/README.md)) |
@@ -78,12 +79,13 @@ secret is actually used.
 
 ## Status
 
-**M0 complete (P1–P4).** A capture goes end to end: parsers turn an ARP table, DHCP leases, or
-mDNS output into provenance-complete observations; the engine calls `require_authorized` on
-every target *before* anything is recorded; the sink writes them idempotently into the
-append-only spine; entity resolution collapses them into assets by stable anchors.
+**M0 complete (P1–P4); M1 in progress (P5).** A capture goes end to end: parsers turn an ARP
+table, DHCP leases, or mDNS output into provenance-complete observations; the engine calls
+`require_authorized` on every target *before* anything is recorded; the sink writes them
+idempotently into the append-only spine; entity resolution collapses them into assets by stable
+anchors. P5 adds the `ActiveScanner` port and its nmap adapter — not yet wired into the engine.
 
-What the system guarantees, each proven by tests against a real Postgres:
+What the system guarantees, each proven by tests:
 
 - **Scope is a gate, not a filter.** Deny-by-default — no authorization, a revoked one, an
   expired one, or another tenant's one all deny. Every decision lands in `audit_log` before it
@@ -96,13 +98,23 @@ What the system guarantees, each proven by tests against a real Postgres:
   changes owner: a conflict raises rather than silently re-pointing evidence.
 - **Merges are reversible.** The event and the status change commit together, a reversal is a
   new event rather than an edit, and an LLM-proposed merge without a rationale is rejected by
-  both the adapter and a `CHECK` constraint. Nothing produces `llm_proposed` yet — the guard is
-  in place before the generator that will need it.
-- **The collector is read-only by construction.** It imports no socket, no subprocess, and no
-  database driver, so extracting it behind an mTLS boundary later is a transport change
-  (`tests/test_adapter_boundaries.py` fails if that decays).
+  both the adapter and a `CHECK` constraint.
+- **Fragile devices get the gentle profile.** The `GENTLE` scan profile means no `-A`, no
+  `--version-all`, `--version-intensity 0`, SYN not connect, a `-T2` ceiling, a scan delay,
+  capped rate and parallelism, and a curated IoT port set rather than all 65535 — asserted flag
+  by flag, so loosening it fails the build (AGENTS.md §2.7).
+- **Nothing goes near a shell.** The nmap invocation is an argument list, and the target is
+  validated as a real IP address before any command exists. nmap's XML is parsed as untrusted
+  input, with external entities and entity expansion refused (ADR-0003).
+- **A failure is never an empty success.** A missing binary, non-zero exit, timeout, or
+  unparseable output raises a specific domain error; "host is down" is a distinct, explicit
+  result.
+- **Adapters stay in their lane.** The collector imports no socket, subprocess, or database
+  driver; the scanner imports no database driver and never `shell=True`
+  (`tests/test_adapter_boundaries.py`).
 
-Next: M1 — active scanning under the gentle-profile rules (AGENTS.md §2.7) and credentialed
-collection, which is what supplies the serials and package-manager versions this design is
-waiting for. Deferred by design: RLS, live packet capture, and the `vulnerability_match` /
-`triage_snapshot` / `insight` tables (M2/M3).
+Next: P6 wires active scanning into the engine — detect-then-adapt profile selection and the
+circuit breaker, both above the adapter so it cannot forget them. Then P7/P8: the
+`CredentialedInspector` port and a read-only SSH adapter, which is what finally supplies
+`version_source='package_manager'` ground truth. Deferred by design: RLS, live packet capture,
+CPE→CVE correlation (M3), and any form of exploitation (never).

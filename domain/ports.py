@@ -25,6 +25,8 @@ from domain.models import (
     MergeRequest,
     ObservationInput,
     ObservationRecord,
+    ScanProfile,
+    ScanResult,
     ScopeDecision,
     SoftwareComponent,
     TriageDossier,
@@ -99,6 +101,30 @@ class AssetRepository(Protocol):
     def reverse_merge(self, merge_id: UUID, *, rationale: str | None = None) -> UUID:
         """Append a reversal event and restore the merged asset to 'active', in one
         transaction. Merges are always reversible (AGENTS.md §3)."""
+        ...
+
+
+class ActiveScanner(Protocol):
+    """Uncredentialed reachability and service/version detection (m1-design §1).
+
+    The port speaks in **profiles and normalized results, never in scanner flags**. That
+    is not stylistic: it is what makes "embedded devices get the gentle treatment" a
+    property the engine can enforce and a test can assert, instead of a string of options
+    that any caller could quietly extend. The translation from `ScanProfile` to actual
+    flags lives in the adapter and nowhere else (AGENTS.md §2.7).
+
+    The scope gate runs before this, unchanged: `require_authorized` before any packet.
+    """
+
+    def scan(self, tenant_id: UUID, target: IPAddress, profile: ScanProfile) -> ScanResult:
+        """Scan one target under the given profile and return normalized observations.
+
+        A host that is not there returns `host_up=False` with no observations — a result.
+        A scan that could not be *performed* raises instead: `DependencyError` when the
+        scanner binary is missing, fails, or times out, and `ValidationError` when its
+        output cannot be trusted. An empty success is never used to mean "something went
+        wrong" (AGENTS.md §67).
+        """
         ...
 
 

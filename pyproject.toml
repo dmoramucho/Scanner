@@ -6,6 +6,9 @@ requires-python = ">=3.12"
 # The domain stays pure (pydantic only); psycopg is the store driver, used exclusively
 # from adapters/ and the integration tests — never from domain/ (ADR-0001).
 dependencies = [
+    # Untrusted-XML parsing for the nmap adapter: blocks XXE and entity expansion, which
+    # stdlib ElementTree does not (ADR-0003). Pure Python, no transitive dependencies.
+    "defusedxml>=0.7.1,<0.8",
     "psycopg[binary]>=3.2,<4",
     "pydantic>=2.9,<3",
 ]
@@ -20,6 +23,7 @@ migrations = [
 dev = [
     { include-group = "migrations" },
     "mypy>=1.11",
+    "types-defusedxml>=0.7",
     "pytest>=8.0",
     "ruff>=0.6",
 ]

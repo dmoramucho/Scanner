@@ -20,6 +20,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 COLLECTOR_ROOT = REPO_ROOT / "adapters" / "collector"
+SCANNER_ROOT = REPO_ROOT / "adapters" / "scanner"
 
 #: Importing any of these from the collector would break a stated guarantee, whatever the
 #: intent: the first three reach the outside world, the rest reach the store.
@@ -30,6 +31,7 @@ FORBIDDEN_IN_COLLECTOR = frozenset(
 ALLOWED_ROOTS = frozenset(sys.stdlib_module_names) | {"domain", "adapters"}
 
 COLLECTOR_MODULES = sorted(COLLECTOR_ROOT.rglob("*.py"))
+SCANNER_MODULES = sorted(SCANNER_ROOT.rglob("*.py"))
 
 
 def imported_roots(module_path: Path) -> list[tuple[str, int]]:
@@ -77,3 +79,25 @@ def test_collector_does_not_import_the_postgres_adapters(module_path: Path) -> N
     source = module_path.read_text(encoding="utf-8")
 
     assert "adapters.postgres" not in source
+
+
+@pytest.mark.parametrize("module_path", SCANNER_MODULES, ids=lambda p: p.name)
+def test_the_scanner_adapter_stays_out_of_the_store(module_path: Path) -> None:
+    """The scanner legitimately runs a subprocess — that is its job. It has no business
+    touching the database: an adapter that both emits packets and writes rows is two
+    responsibilities and one place for a scope check to be skipped."""
+    imported = {root for root, _ in imported_roots(module_path)}
+
+    assert "psycopg" not in imported
+    assert "adapters.postgres" not in module_path.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("module_path", SCANNER_MODULES, ids=lambda p: p.name)
+def test_the_scanner_never_reaches_for_a_shell(module_path: Path) -> None:
+    """`os.system`, `subprocess` with `shell=True`, and `popen` all reintroduce the shell
+    the argv-based invocation exists to avoid (AGENTS.md §2.9)."""
+    source = module_path.read_text(encoding="utf-8")
+
+    assert "shell=True" not in source
+    assert "os.system" not in source
+    assert "os.popen" not in source

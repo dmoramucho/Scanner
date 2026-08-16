@@ -370,3 +370,44 @@ class MergeRequest(BaseModel):
     rationale: str | None = None  # required when derivation == 'llm_proposed'
     confidence: Confidence | None = None
     model_version: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# m1-design §1 — ActiveScanner operation types
+# ---------------------------------------------------------------------------
+
+
+class ScanProfile(StrEnum):
+    """*Intent*, not a bag of nmap options. The translation from intent to flags lives in
+    the scanning adapter and nowhere else (m1-design §2).
+
+    `GENTLE` is the one that keeps fragile embedded stacks alive (AGENTS.md §2.7): the
+    engine selects it for anything fingerprinted as embedded, and the adapter is obliged to
+    honour it. A caller cannot ask for "gentle but with a bit more" — that is the point of
+    an enum of two values.
+    """
+
+    GENTLE = "gentle"  # cameras, VoIP, printers, UPS, badge readers — anything embedded
+    STANDARD = "standard"  # servers and other robust hosts
+
+
+class ScanResult(BaseModel):
+    """What an active scan learned, already shaped for the existing spine.
+
+    `observations` are `ObservationInput`s the existing `ObservationSink` records
+    unchanged, carrying `version_source='banner'` on anything version-shaped: an active
+    scan infers versions from banners, and never has package-manager ground truth
+    (AGENTS.md §3). `anchors` are the identity signals the scan saw — a MAC when the
+    scanner is on the same segment — for the engine to hand to entity resolution.
+
+    `host_up=False` with no observations is a *result*, not a failure: the host was
+    checked and was not there. A failure raises instead (m1-design §1, AGENTS.md §67).
+    """
+
+    target: str
+    profile: ScanProfile
+    host_up: bool
+    observations: list[ObservationInput] = Field(default_factory=list)
+    anchors: list[AnchorObservation] = Field(default_factory=list)
+    started_at: datetime  # UTC — when the scan of this target began
+    finished_at: datetime  # UTC

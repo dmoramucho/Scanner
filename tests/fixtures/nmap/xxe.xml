@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE nmaprun [
+  <!ENTITY passwd SYSTEM "file:///etc/passwd">
+]>
+<nmaprun scanner="nmap" start="1786623000">
+<host><status state="up"/><address addr="10.10.5.7" addrtype="ipv4"/>
+<ports><port protocol="tcp" portid="80"><state state="open"/><service name="&passwd;" method="table" conf="3"/></port></ports>
+</host>
+</nmaprun>
