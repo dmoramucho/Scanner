@@ -990,3 +990,63 @@ class VulnerabilityMatchRecord(BaseModel):
 
     match_id: UUID
     created: bool  # False ⇒ the match was already known and has been refreshed
+
+
+# ---------------------------------------------------------------------------
+# m3-design §3 — advisory retrieval (Half B's grounding channel)
+# ---------------------------------------------------------------------------
+
+
+class AdvisoryDocumentStatus(StrEnum):
+    """Whether a referenced document was retrieved, or established to be unretrievable."""
+
+    OK = "ok"
+    UNAVAILABLE = "unavailable"  # asked, and the source had nothing to give
+
+
+class AdvisoryDocument(BaseModel):
+    """One fetched reference document, cached by URL.
+
+    `UNAVAILABLE` is stored deliberately, and it is the same device as `CveQueryCacheEntry`:
+    a reference that 404s is a fact about that reference, and storing it stops every
+    retrieval run re-asking a question already answered. It is *not* a failure — a failure
+    raises and is never written here (AGENTS.md §67).
+
+    `content` holds the sanitized text (ADR-0013). What was fetched is bounded, stripped of
+    anything that could be re-read as instruction, and only then stored: the cache is on the
+    safe side of the boundary, so nothing downstream can reach the raw bytes by accident.
+    """
+
+    url: str
+    status: AdvisoryDocumentStatus = AdvisoryDocumentStatus.OK
+    content: str = ""
+    content_hash: str | None = None
+    media_type: str | None = None
+    cve_id: str | None = None  # the CVE whose references led us here
+    fetched_at: datetime  # UTC
+    raw_record_ref: str | None = None
+
+    @property
+    def usable(self) -> bool:
+        return self.status is AdvisoryDocumentStatus.OK and bool(self.content.strip())
+
+
+class AdvisoryRetrievalReport(BaseModel):
+    """What retrieval did, including everything it had to defuse.
+
+    The neutralisation counters are not diagnostics — they are the operator-visible signal
+    that a published advisory tried to address the model rather than describe a
+    vulnerability. Nothing downstream branches on them; they exist so that a *pattern* of
+    hostile advisories is visible to a human instead of only ever being silently handled
+    (ADR-0013, AGENTS.md §2.9).
+    """
+
+    fetches: int = 0
+    served_from_cache: int = 0
+    fetched_from_source: int = 0
+    unavailable_references: int = 0
+    #: Spans that read as an instruction to a model rather than as advisory prose.
+    neutralized_injections: int = 0
+    #: Control/format characters removed: chat-template tokens, zero-width and bidi marks.
+    neutralized_control_tokens: int = 0
+    truncated_documents: int = 0

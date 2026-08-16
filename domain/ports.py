@@ -16,6 +16,7 @@ from typing import Protocol
 from uuid import UUID
 
 from domain.models import (
+    AdvisoryDocument,
     AdvisoryEvidence,
     AnchorObservation,
     AssetAnchorSet,
@@ -494,7 +495,41 @@ class AdvisoryRetriever(Protocol):
 
     def fetch(self, cve_id: str, matched_cpe: str) -> AdvisoryEvidence:
         """Fetch advisory text + fix-diff reference from an external source (NVD/GHSA/commit).
-        Raises DependencyError(retryable=...) on failure. Returns AdvisoryEvidence (contract §6)."""
+        Raises DependencyError(retryable=...) on failure. Returns AdvisoryEvidence (contract §6).
+
+        Three outcomes, and keeping them apart is the whole contract (P15, ADR-0013):
+
+        * **Evidence.** `advisory_text` is non-empty, real, fetched text with its source
+          recorded. This is the only channel by which CVE knowledge may enter insight
+          generation.
+        * **`NotFoundError`.** The sources were reachable and had no advisory text for this
+          CVE. There is nothing to ground on, so the generator must refuse rather than
+          reason from memory — never an `AdvisoryEvidence` with an empty `advisory_text`,
+          which would look like valid grounding.
+        * **`DependencyError(retryable=…)`.** A source could not be reached. Ask again;
+          this is not "there is no advisory" (AGENTS.md §67).
+        """
+        ...
+
+
+class AdvisoryDocumentCache(Protocol):
+    """Fetched reference documents, cached by URL.
+
+    Cache-first for the same reason as `CveCache`: a retrieval run should not re-download a
+    patch it already holds, and re-asking a reference that has already 404'd is noise
+    somebody else has to serve. Stores sanitized text, never raw bytes (ADR-0013).
+    """
+
+    def document(self, url: str) -> AdvisoryDocument | None:
+        """The cached document for this URL, or None if it was never fetched.
+
+        `None` means "never asked". A document with `status=unavailable` means "asked, and
+        there was nothing there" — a different answer, and one worth keeping.
+        """
+        ...
+
+    def store(self, document: AdvisoryDocument) -> None:
+        """Cache a fetched document, replacing any previous fetch of the same URL."""
         ...
 
 

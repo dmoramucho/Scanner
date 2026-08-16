@@ -1,0 +1,31 @@
+From 4f0e51c0b9e5e1d4bc0e9f0f9b3f0d5f2ab3c1de Mon Sep 17 00:00:00 2001
+From: A Maintainer <maintainer@example.org>
+Date: Tue, 7 Mar 2023 10:12:44 +0000
+Subject: [PATCH] Fix request smuggling in mod_proxy_ajp
+
+Reject requests whose Transfer-Encoding header is followed by trailing
+whitespace before the colon, which some intermediaries accept.
+
+---
+ modules/proxy/mod_proxy_ajp.c | 12 ++++++++----
+ server/protocol.c             |  6 +++---
+ 2 files changed, 11 insertions(+), 7 deletions(-)
+
+diff --git a/modules/proxy/mod_proxy_ajp.c b/modules/proxy/mod_proxy_ajp.c
+index 1111111..2222222 100644
+--- a/modules/proxy/mod_proxy_ajp.c
++++ b/modules/proxy/mod_proxy_ajp.c
+@@ -232,7 +232,11 @@ static int ajp_handler(request_rec *r)
+-    if (!strcasecmp(name, "Transfer-Encoding")) {
++    if (!ap_cstr_casecmp(name, "Transfer-Encoding")) {
++        if (ap_strchr_c(value, ' ') != NULL) {
++            return HTTP_BAD_REQUEST;
++        }
+     }
+diff --git a/server/protocol.c b/server/protocol.c
+index 3333333..4444444 100644
+--- a/server/protocol.c
++++ b/server/protocol.c
+@@ -1102,6 +1102,9 @@ AP_DECLARE(void) ap_get_mime_headers_core(request_rec *r)
+-        strict = 0;
++        strict = 1;

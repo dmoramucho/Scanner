@@ -42,6 +42,10 @@ CORRELATION_MODULES = [
     REPO_ROOT / "engine" / "cpe.py",
 ]
 
+#: Half B's grounding channel. The retriever fetches and quotes; the model that reasons over
+#: what it produces lives in P16 and never in here (m3-design §3).
+ADVISORY_MODULES = sorted((REPO_ROOT / "adapters" / "advisory").rglob("*.py"))
+
 #: Half A of M3 is deterministic by construction (m3-design §1). A model's CVE knowledge is
 #: stale and hallucinated CVE ids are its most characteristic failure (AGENTS.md §4.8), so
 #: the feed must never acquire one — not even "just to summarise a description".
@@ -170,3 +174,41 @@ def test_the_correlator_depends_on_ports_not_adapters(module_path: Path) -> None
 
     assert "adapters" not in source
     assert "psycopg" not in source
+
+
+@pytest.mark.parametrize("module_path", ADVISORY_MODULES, ids=lambda p: p.name)
+def test_the_advisory_retriever_imports_no_model(module_path: Path) -> None:
+    """The rule this whole step exists to enforce: **ground, never recall** (AGENTS.md §4.8).
+
+    The retriever is the only channel by which CVE knowledge reaches insight generation, and
+    it is worth nothing if the channel can itself invent. A model client here could
+    summarise an advisory that was never fetched, and the citation would look identical to a
+    real one.
+    """
+    imported = {root for root, _ in imported_roots(module_path)}
+
+    assert imported & MODEL_PACKAGES == set()
+
+
+@pytest.mark.parametrize("module_path", ADVISORY_MODULES, ids=lambda p: p.name)
+def test_the_advisory_retriever_stays_out_of_the_store(module_path: Path) -> None:
+    """It fetches and sanitises; a cache adapter persists. Keeping psycopg out is what makes
+    the whole retriever testable without a database."""
+    imported = {root for root, _ in imported_roots(module_path)}
+
+    assert "psycopg" not in imported
+    assert "adapters.postgres" not in module_path.read_text(encoding="utf-8")
+
+
+def test_the_sanitizer_is_the_only_way_advisory_text_reaches_the_evidence() -> None:
+    """A structural assertion rather than a behavioural one.
+
+    Every field of `AdvisoryEvidence` is built from a value that passed through
+    `sanitize`/`sanitize_line`, and the way to keep that true as the module grows is to
+    notice when a new raw-text path appears. `record.description` and a fetched body are the
+    two sources of untrusted text; both are named here with their sanitising call.
+    """
+    source = (REPO_ROOT / "adapters" / "advisory" / "retriever.py").read_text(encoding="utf-8")
+
+    assert "sanitize(record.description" in source
+    assert "sanitize(response.body.decode" in source

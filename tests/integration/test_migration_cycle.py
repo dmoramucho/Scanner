@@ -45,8 +45,17 @@ SIGNAL_CACHE_TABLES = {"kev_cache", "epss_cache", "feed_snapshot"}
 #: about a tenant's estate.
 MATCH_TABLES = {"vulnerability_match"}
 
+#: What `0006_advisory_cache` adds — the grounding material Half B reasons over. Not
+#: tenant-scoped: a published advisory is a fact about software in the world.
+ADVISORY_TABLES = {"advisory_document"}
+
 EXPECTED_TABLES = (
-    EXPAND_TABLES | SOFTWARE_TABLES | CVE_CACHE_TABLES | SIGNAL_CACHE_TABLES | MATCH_TABLES
+    EXPAND_TABLES
+    | SOFTWARE_TABLES
+    | CVE_CACHE_TABLES
+    | SIGNAL_CACHE_TABLES
+    | MATCH_TABLES
+    | ADVISORY_TABLES
 )
 
 #: Still not created by anything — they arrive with the features that need them
@@ -54,7 +63,7 @@ EXPECTED_TABLES = (
 #: built and must not be until Half A is verified (m3-design §1).
 DEFERRED_TABLES = {"triage_snapshot", "insight"}
 
-HEAD_REVISION = "0005_vulnerability_match"
+HEAD_REVISION = "0006_advisory_cache"
 
 
 def _table_names(url: str) -> set[str]:
@@ -125,10 +134,12 @@ def test_downgrading_one_step_removes_only_the_latest_revision(scratch_database:
     assert alembic("downgrade", "-1", url=scratch_database).returncode == 0
 
     remaining = _table_names(scratch_database)
-    assert remaining & MATCH_TABLES == set()
+    assert remaining & ADVISORY_TABLES == set()
     # earlier revisions untouched
-    assert remaining >= EXPAND_TABLES | SOFTWARE_TABLES | CVE_CACHE_TABLES | SIGNAL_CACHE_TABLES
-    assert _current_revision(scratch_database) == "0004_kev_epss_cache"
+    assert remaining >= (
+        EXPAND_TABLES | SOFTWARE_TABLES | CVE_CACHE_TABLES | SIGNAL_CACHE_TABLES | MATCH_TABLES
+    )
+    assert _current_revision(scratch_database) == "0005_vulnerability_match"
 
 
 def test_upgrade_is_recorded_at_the_expected_revision(scratch_database: str) -> None:

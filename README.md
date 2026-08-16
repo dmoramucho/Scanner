@@ -84,7 +84,7 @@ secret is actually used.
 
 ## Status
 
-**M0, M1 and M2 complete (P1–P11); M3 Half A complete (P12–P14).** A capture goes end to end: parsers turn an ARP
+**M0, M1 and M2 complete (P1–P11); M3 Half A complete (P12–P14); Half B grounding in place (P15).** A capture goes end to end: parsers turn an ARP
 table, DHCP leases, or mDNS output into provenance-complete observations; the engine calls
 `require_authorized` on every target *before* anything is recorded; the sink writes them
 idempotently into the append-only spine; entity resolution collapses them into assets by stable
@@ -147,6 +147,18 @@ What the system guarantees, each proven by tests:
 - **CVE knowledge only ever comes from a feed.** Nothing in `adapters/feed/` imports a model
   client, asserted by `tests/test_adapter_boundaries.py`: an LLM's CVE knowledge is stale and
   hallucinated CVE ids are its most characteristic failure (AGENTS.md §4.8).
+- **What the model will read is quoted, not recalled.** The `AdvisoryRetriever` is the only
+  channel by which CVE knowledge reaches insight generation: it quotes NVD's description and the
+  fix patch behind the CVE, attributes each piece to the source it came from, and derives
+  `fix_touched_summary` from the diff's own subject line and changed paths — or leaves it empty.
+  No advisory text raises rather than returning grounding that is an empty string (ADR-0013).
+- **Hostile advisory text is defanged at the boundary, before it is cached.** A CVE description
+  is written by people — sometimes the people whose software the CVE is about — and it ends up
+  inside a prompt. Chat-template tokens, envelope tags, invisible and bidi characters, and
+  instruction-shaped spans are neutralised with a *visible* marker on the way in, so no ordering
+  or configuration can route raw advisory text into a model. Fetching is restricted to https
+  patch URLs on an allowlist of code hosts, because dereferencing a CVE's references from inside
+  a corporate network is a server-side request forgery primitive (ADR-0013).
 - **The shadow-IT number never overclaims.** A CMDB record matches an asset by the same anchor
   priority the ER uses (`serial › mac › hostname`); anything unresolved — two devices with one
   name, strong anchors that disagree, a name that only matches once punctuation is deleted, an
@@ -206,7 +218,15 @@ split a safety barrier rather than an ordering preference, because code where an
 "decide" whether a vulnerability exists is exactly where it would inject a false negative into a
 security system.
 
-Next is Half B: the `AdvisoryRetriever` and `InsightGenerator` ports, grounded and cited AI
-insight *on top of* matches Half A already made — propose/dispose, KEV-sticky, ungrounded
-insights rejected before persistence. Deferred by design: vendor inspectors (VAPIX, ISAPI, BusyBox), RLS, live packet
+**Half B has started with its grounding channel, not its model.** The `AdvisoryRetriever`
+fetches the *real* advisory text and the fix patch behind a CVE, quotes them with their sources
+attached, and derives what the fix touched from the diff itself — so every claim an insight will
+later make traces to a document a human can open (AGENTS.md §4.8). Two properties are asserted:
+hostile advisory content is neutralised **before it is cached**, so no ordering or configuration
+can route attacker-written text into a prompt (ADR-0013); and no advisory text raises rather than
+returning empty grounding, so the generator will be able to refuse instead of recalling.
+
+Next is the model itself: the `InsightGenerator`, the `TriageDossier` assembly, and grounded,
+cited, advisory insight *on top of* matches Half A already made — propose/dispose, KEV-sticky,
+ungrounded insights rejected before persistence. Deferred by design: vendor inspectors (VAPIX, ISAPI, BusyBox), RLS, live packet
 capture, default-credential probing, and any form of exploitation (never).
