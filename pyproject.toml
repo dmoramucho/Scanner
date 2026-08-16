@@ -3,14 +3,22 @@ name = "corporate-asset-scanner"
 version = "0.1.0"
 description = "On-prem corporate asset scanner: discovery, entity resolution, correlation, AI-assisted insight."
 requires-python = ">=3.12"
-# Runtime dependencies are deliberately minimal at P1: the domain is pure and needs
-# nothing but pydantic. The persistence driver and migration tool land in P2 (ADR-0001).
+# The domain stays pure (pydantic only); psycopg is the store driver, used exclusively
+# from adapters/ and the integration tests — never from domain/ (ADR-0001).
 dependencies = [
+    "psycopg[binary]>=3.2,<4",
     "pydantic>=2.9,<3",
 ]
 
 [dependency-groups]
+# Alembic (and the SQLAlchemy it drags in) belongs to the migration path only, not the
+# application runtime — ADR-0001. An on-prem deploy installs it for the migration step
+# (`uv sync --no-default-groups --group migrations`) and runs the app without it.
+migrations = [
+    "alembic>=1.13",
+]
 dev = [
+    { include-group = "migrations" },
     "mypy>=1.11",
     "pytest>=8.0",
     "ruff>=0.6",
@@ -73,7 +81,7 @@ docstring-code-format = true
 [tool.mypy]
 python_version = "3.12"
 strict = true
-files = ["domain", "adapters", "engine", "config", "tests"]
+files = ["domain", "adapters", "engine", "config", "migrations", "tests"]
 plugins = ["pydantic.mypy"]
 warn_unreachable = true
 enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool"]
@@ -90,3 +98,6 @@ warn_required_dynamic_aliases = true
 testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "-q --strict-markers --strict-config"
+markers = [
+    "integration: needs the compose Postgres; skipped when it is unreachable (ADR-0002)",
+]
