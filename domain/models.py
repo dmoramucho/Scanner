@@ -411,3 +411,53 @@ class ScanResult(BaseModel):
     anchors: list[AnchorObservation] = Field(default_factory=list)
     started_at: datetime  # UTC — when the scan of this target began
     finished_at: datetime  # UTC
+
+
+# ---------------------------------------------------------------------------
+# m1-design §1 — CredentialedInspector / InspectorRegistry operation types
+# ---------------------------------------------------------------------------
+
+
+class DeviceFingerprint(BaseModel):
+    """Capability signals about a device — never a brand.
+
+    The registry picks an inspector from what a device *can do* (it speaks SSH; a
+    manufacturer API answered), not from what it is called. That is what keeps a new
+    vendor to a new adapter instead of an `if brand == …` branch spreading through the
+    core (m1-design §1).
+
+    Everything here comes from normalization work already done: OUI lookup, service
+    banners, mDNS advertisements, prior observations.
+    """
+
+    target: str
+    open_ports: tuple[int, ...] = ()
+    service_banners: tuple[str, ...] = ()  # e.g. ("SSH-2.0-OpenSSH_8.9p1",)
+    mdns_services: tuple[str, ...] = ()
+    mac_vendor: str | None = None  # a signal about capability, not a selector
+    #: Opaque handle into the vault. No credential path ⇒ no credentialed inspection, and
+    #: the device keeps `version_source='banner'` (m1-design §1).
+    credential_ref: str | None = None
+    username: str | None = None
+
+
+class InspectionResult(BaseModel):
+    """Ground truth read from a device we could authenticate to.
+
+    `observations` are `ObservationInput`s the existing `ObservationSink` records
+    unchanged, carrying `version_source='package_manager'` (a package database is what the
+    device itself says is installed) or `'vendor_api'` for a manufacturer readout. That is
+    the flag that ends the OS-backport false positive: a banner claiming `Apache/2.4.52`
+    can be wrong about patching, `dpkg` cannot (AGENTS.md §3).
+
+    Nothing here ever carries a credential: the secret reaches the transport and stops
+    there (AGENTS.md §2.10).
+    """
+
+    target: str
+    inspector: str  # which adapter produced this, for provenance
+    observations: list[ObservationInput] = Field(default_factory=list)
+    components: list[SoftwareComponent] = Field(default_factory=list)
+    anchors: list[AnchorObservation] = Field(default_factory=list)
+    started_at: datetime  # UTC
+    finished_at: datetime  # UTC

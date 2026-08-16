@@ -20,7 +20,9 @@ from domain.models import (
     AnchorObservation,
     AssetResolution,
     AssetView,
+    DeviceFingerprint,
     InsightProposal,
+    InspectionResult,
     IPAddress,
     MergeRequest,
     ObservationInput,
@@ -125,6 +127,49 @@ class ActiveScanner(Protocol):
         output cannot be trusted. An empty success is never used to mean "something went
         wrong" (AGENTS.md §67).
         """
+        ...
+
+
+class CredentialedInspector(Protocol):
+    """Ground truth read from a device we can authenticate to (m1-design §1, §3).
+
+    Brand-agnostic by construction: this is one seam, and the vendor specifics live in
+    adapters chosen by `InspectorRegistry`. What every implementation owes:
+
+    * **Read-only, absolutely.** An inspector reads; it never configures. No command that
+      writes device or system state, ever, whatever the provocation (AGENTS.md §2.4).
+    * **The credential is resolved through `SecretsPort` and stays a `Secret`.** The raw
+      value reaches the transport and nothing else — not a log line, not an exception
+      message, not an observation payload (AGENTS.md §2.10).
+    * **Device output is untrusted input.** It is parsed and validated into normalized
+      components before it becomes an observation; never executed, never trusted as a
+      filename or a query (AGENTS.md §2.9).
+    """
+
+    def inspect(self, tenant_id: UUID, target: IPAddress, credential_ref: str) -> InspectionResult:
+        """Read what the device says is installed on it.
+
+        Raises `SecretAccessError` when the credential cannot be resolved, and
+        `DependencyError` when the device cannot be reached or refuses the credential —
+        `retryable=True` for a device that may simply be busy, `False` for a credential
+        that will not work next time either. Raises `ValidationError` when the device's
+        output cannot be trusted. An empty result is never used to signal a failure
+        (AGENTS.md §67).
+        """
+        ...
+
+
+class InspectorRegistry(Protocol):
+    """Chooses the inspector for a device from its capabilities — not its brand.
+
+    Returns `None` when there is no credentialed path, which is a legitimate answer: the
+    device stays uncredentialed and its observations keep `version_source='banner'`
+    (m1-design §1). Adding a vendor-API inspector later is a registration, not a change
+    to any caller.
+    """
+
+    def for_device(self, fingerprint: DeviceFingerprint) -> CredentialedInspector | None:
+        """The inspector that can read this device, or None if we have no way in."""
         ...
 
 

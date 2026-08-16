@@ -21,6 +21,7 @@ unmanaged-device (shadow-IT) diff, confidence-based noise reduction, and grounde
 | `adapters/postgres/` | `ScopeAuthority`, `ObservationSink`, `AssetRepository` over Postgres — the only place psycopg lives |
 | `adapters/collector/` | Passive discovery (ARP / DHCP / mDNS). Read-only and store-free by construction |
 | `adapters/scanner/` | Active scanning: the nmap orchestrator. The only place that knows what a scanner flag is |
+| `adapters/inspector/` | Credentialed reads over SSH — read-only, allow-listed commands, credential-safe |
 | `engine/` | Orchestration; the scope gate runs before anything is recorded, and the scan-safety policy lives here |
 | `config/` | Startup configuration — validated once, fail-fast |
 | `migrations/` | Alembic revisions — hand-written raw SQL, no ORM ([how](migrations/README.md)) |
@@ -79,7 +80,7 @@ secret is actually used.
 
 ## Status
 
-**M0 complete (P1–P4); M1 in progress (P5–P6).** A capture goes end to end: parsers turn an ARP
+**M0 complete (P1–P4); M1 in progress (P5–P7).** A capture goes end to end: parsers turn an ARP
 table, DHCP leases, or mDNS output into provenance-complete observations; the engine calls
 `require_authorized` on every target *before* anything is recorded; the sink writes them
 idempotently into the append-only spine; entity resolution collapses them into assets by stable
@@ -116,12 +117,20 @@ What the system guarantees, each proven by tests:
 - **A failure is never an empty success.** A missing binary, non-zero exit, timeout, or
   unparseable output raises a specific domain error; "host is down" is a distinct, explicit
   result.
+- **Credentials reach the wire and nothing else.** The SSH inspector resolves its credential
+  through `SecretsPort`, holds a redacting `Secret`, and calls `reveal()` on exactly one line —
+  a test greps the package and fails if it appears anywhere else. No log record, exception,
+  traceback, or observation payload carries it, on success or on any failure path.
+- **An inspector cannot write to a device.** Five constant commands, allow-listed by verb *and*
+  arguments (`dpkg -l` is permitted, `dpkg --install` is not), with a canary test that fails if
+  the list grows at all. Unknown SSH host keys are rejected; ambient keys and agents are
+  disabled, so only the vault's credential can ever authenticate.
 - **Adapters stay in their lane.** The collector imports no socket, subprocess, or database
-  driver; the scanner imports no database driver and never `shell=True`
-  (`tests/test_adapter_boundaries.py`).
+  driver; the scanner imports no database driver and never `shell=True`; the inspector touches
+  no store (`tests/test_adapter_boundaries.py`).
 
-Next: P6 wires active scanning into the engine — detect-then-adapt profile selection and the
-circuit breaker, both above the adapter so it cannot forget them. Then P7/P8: the
-`CredentialedInspector` port and a read-only SSH adapter, which is what finally supplies
-`version_source='package_manager'` ground truth. Deferred by design: RLS, live packet capture,
-CPE→CVE correlation (M3), and any form of exploitation (never).
+Next: P8 wires credentialed inspection into the ingestion path and the ER, so
+`version_source='package_manager'` ground truth reaches the asset graph, plus the real-target
+validation runbook that fixtures cannot stand in for. Deferred by design: vendor inspectors
+(VAPIX, ISAPI, BusyBox), RLS, live packet capture, CPE→CVE correlation (M3), default-credential
+probing, and any form of exploitation (never).

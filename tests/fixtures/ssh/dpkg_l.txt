@@ -1,0 +1,12 @@
+Desired=Unknown/Install/Remove/Purge/Hold
+| Status=Not/Inst/Conf-files/Unpacked/halF-conf/Half-inst/trig-aWait/Trig-pend
+|/ Err?=(none)/Reinst-required (Status,Err: uppercase=bad)
+||/ Name                    Version                     Architecture Description
++++-=======================-===========================-============-===========================
+ii  apache2                 2.4.52-1ubuntu4.9           amd64        Apache HTTP Server
+ii  libc6:amd64             2.35-0ubuntu3.8             amd64        GNU C Library: Shared libraries
+ii  openssh-server          1:8.9p1-3ubuntu0.10         amd64        secure shell (SSH) server
+ii  openssl                 3.0.2-0ubuntu1.18           amd64        Secure Sockets Layer toolkit
+hi  linux-image-generic     5.15.0.91.88                amd64        Generic Linux kernel image
+rc  nginx-common            1.18.0-6ubuntu14.4          all          small, powerful web server
+iU  half-configured-pkg     1.0.0                       amd64        never finished installing

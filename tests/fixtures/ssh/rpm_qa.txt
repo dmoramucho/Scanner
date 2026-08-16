@@ -1,0 +1,6 @@
+openssl-3.0.7-25.el9.x86_64
+httpd-2.4.57-5.el9.x86_64
+glibc-2.34-83.el9.7.x86_64
+kernel-5.14.0-362.8.1.el9.x86_64
+python3-libs-3.9.18-1.el9.x86_64
+this-line-is-not-a-package
