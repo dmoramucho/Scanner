@@ -1,0 +1,32 @@
+# ISC dhcpd lease database (excerpt). Times are UTC.
+lease 10.10.5.20 {
+  starts 4 2026/08/13 10:15:22;
+  ends 5 2026/08/14 10:15:22;
+  binding state active;
+  next binding state free;
+  hardware ethernet aa:bb:cc:00:11:22;
+  client-hostname "printer-3f";
+}
+lease 10.10.5.31 {
+  starts 4 2026/08/13 09:02:00;
+  ends 5 2026/08/14 09:02:00;
+  binding state active;
+  hardware ethernet 00:40:8c:9d:1e:2f;
+  client-hostname "cam-lobby-01";
+}
+lease 10.10.5.44 {
+  starts 3 2026/08/12 22:41:10;
+  ends 4 2026/08/13 22:41:10;
+  binding state free;
+  hardware ethernet 00:1a:2b:3c:4d:5e;
+}
+lease 192.168.99.14 {
+  starts 4 2026/08/13 11:00:00;
+  ends 5 2026/08/14 11:00:00;
+  binding state active;
+  hardware ethernet de:ad:be:ef:00:01;
+  client-hostname "not-ours";
+}
+lease not-an-ip {
+  binding state active;
+}

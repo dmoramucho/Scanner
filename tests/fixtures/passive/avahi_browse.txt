@@ -1,0 +1,6 @@
++;eth0;IPv4;Brother\032HL-L2350DW;_ipp._tcp;local
+=;eth0;IPv4;Brother\032HL-L2350DW;_ipp._tcp;local;printer-3f.local;10.10.5.20;631;"ty=Brother HL-L2350DW"
+=;eth0;IPv4;AXIS\032M3045-V;_axis-video._tcp;local;cam-lobby-01.local;10.10.5.31;80;"macaddress=00408C9D1E2F"
+=;eth1;IPv4;Guest\032Laptop;_device-info._tcp;local;guest-lt.local;192.168.99.14;9;"model=MacBookPro18,3"
+=;eth0;IPv4;Broken;_http._tcp;local;bad-host.local;999.1.1.1;80;"x=1"
+=;eth0;IPv4;TooFewFields;_http._tcp

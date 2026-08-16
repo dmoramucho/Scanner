@@ -105,3 +105,16 @@ def conn(migrated_database: str) -> Iterator[psycopg.Connection[tuple[Any, ...]]
             yield connection
         finally:
             connection.rollback()
+
+
+@pytest.fixture
+def autocommit_conn(migrated_database: str) -> Iterator[psycopg.Connection[tuple[Any, ...]]]:
+    """A committing connection, for the adapters that require one.
+
+    `PostgresScopeAuthority` refuses a transactional connection: an audit entry that a
+    caller can roll back is not an audit trail. Tests using this fixture therefore leave
+    rows behind, and isolate themselves with a fresh `tenant_id` per test rather than by
+    rollback — which also exercises the tenant-scoping discipline (AGENTS.md §5).
+    """
+    with psycopg.connect(migrated_database, autocommit=True) as connection:
+        yield connection

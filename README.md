@@ -18,8 +18,9 @@ unmanaged-device (shadow-IT) diff, confidence-based noise reduction, and grounde
 | [`docs/data/data-model.md`](docs/data/data-model.md) | The schema of record; applied by `0001_expand` |
 | [`docs/adr/`](docs/adr/) | One ADR per material decision |
 | `domain/` | The deterministic core: models, ports, errors. **stdlib + pydantic only** |
-| `adapters/` | The only layer that touches infrastructure (Postgres, vault, RAG, LLM) |
-| `engine/` | Orchestration; enforces scope before a packet is emitted |
+| `adapters/postgres/` | `ScopeAuthority` and `ObservationSink` over Postgres — the only place psycopg lives |
+| `adapters/collector/` | Passive discovery (ARP / DHCP / mDNS). Read-only and store-free by construction |
+| `engine/` | Orchestration; the scope gate runs before anything is recorded |
 | `config/` | Startup configuration — validated once, fail-fast |
 | `migrations/` | Alembic revisions — hand-written raw SQL, no ORM ([how](migrations/README.md)) |
 | `tests/` | Unit tests, the mechanically enforced `domain/` boundary, and `integration/` against a real Postgres |
@@ -77,13 +78,18 @@ secret is actually used.
 
 ## Status
 
-**P2 — store and database-enforced invariants.** The M0 schema is applied by migration
-`0001_expand` (raw SQL, no ORM), and its guarantees are proven against a real Postgres:
-`observation` / `audit_log` / `asset_merge_event` refuse `UPDATE` and `DELETE`, strong anchors
-are unique per tenant while IPs are free to repeat, `cidr >>= $target` answers the engine's
-scope pre-flight, and an LLM-proposed merge without a rationale is rejected.
+**P3 — scope enforcement, ingestion, and passive discovery.** A capture goes end to end:
+parsers turn an ARP table, DHCP leases, or mDNS output into provenance-complete observations;
+the engine calls `require_authorized` on every target *before* anything is recorded; the sink
+writes them idempotently into the append-only spine.
 
-`adapters/` and `engine/` are still empty. Next: P3 (`ScopeAuthority` adapter + engine
-pre-flight), P4 (ingestion into `observation`), then entity resolution — see
-`docs/architecture/ports.md` §10. Deferred by design: RLS, and the `software_component` /
-`vulnerability_match` / `triage_snapshot` / `insight` tables (M2/M3).
+The scope gate is deny-by-default and fails closed — no authorization, a revoked one, an
+expired one, or another tenant's one all deny, every decision lands in `audit_log` before it is
+returned, and an out-of-scope target leaves nothing in `observation`. The passive collector
+imports no socket, no subprocess, and no database driver, so "read-only against target
+infrastructure" is a property of its dependencies rather than a promise
+(`tests/test_adapter_boundaries.py`).
+
+Next: entity resolution into `asset` (`AssetRepository`), then the M1 active/credentialed
+adapters. Deferred by design: active scanning, live packet capture, RLS, and the
+`software_component` / `vulnerability_match` / `triage_snapshot` / `insight` tables (M2/M3).

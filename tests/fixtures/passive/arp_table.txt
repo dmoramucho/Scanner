@@ -1,0 +1,9 @@
+# `ip neigh` on the core switch's management host, 2026-08-13.
+# In-scope range is 10.10.0.0/16; 192.168.99.x is a neighbouring VLAN we are NOT authorized for.
+10.10.5.7 dev eth0 lladdr aa:bb:cc:dd:ee:ff REACHABLE
+10.10.5.20 dev eth0 lladdr aa:bb:cc:00:11:22 STALE
+10.10.5.31 dev eth0 lladdr 00:40:8c:9d:1e:2f REACHABLE
+192.168.99.14 dev eth1 lladdr de:ad:be:ef:00:01 REACHABLE
+10.10.5.99 dev eth0 lladdr  INCOMPLETE
+this is not an arp entry at all
+10.10.5.250 dev eth0 lladdr zz:zz:zz:zz:zz:zz REACHABLE
