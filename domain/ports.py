@@ -18,6 +18,7 @@ from uuid import UUID
 from domain.models import (
     AdvisoryEvidence,
     AnchorObservation,
+    AssetAnchorSet,
     AssetResolution,
     AssetView,
     DeviceFingerprint,
@@ -26,6 +27,8 @@ from domain.models import (
     IPAddress,
     ManagedRecordInput,
     ManagedRecordResult,
+    ManagedRecordSnapshot,
+    ManagementState,
     MergeRequest,
     ObservationInput,
     ObservationRecord,
@@ -224,6 +227,42 @@ class ManagedRecordSink(Protocol):
 
     def record_batch(self, batch: Sequence[ManagedRecordInput]) -> list[ManagedRecordResult]:
         """Batch variant; per-item idempotency, results in input order."""
+        ...
+
+
+class ReconciliationStore(Protocol):
+    """Both sides of the shadow-IT diff, and the two projections it writes back.
+
+    Separate from `AssetRepository` on purpose: entity resolution answers "which asset is
+    this observation about?", while this answers "which assets and records exist, and what
+    do we now believe about who manages them?". Folding the second into the first would
+    give the ER contract a reporting surface it has no business carrying (ADR-0006 noted the
+    same boundary from the other side).
+
+    The reads return anchor sets rather than whole rows: matching needs identity and nothing
+    else, and a port that handed out everything would invite the diff to reason about fields
+    it has no business seeing.
+    """
+
+    def asset_anchors(self, tenant_id: UUID) -> Sequence[AssetAnchorSet]:
+        """Every *active* asset, reduced to what it can be matched on. Merged assets are
+        excluded — they are not devices, they are history (AGENTS.md §3)."""
+        ...
+
+    def managed_records(self, tenant_id: UUID) -> Sequence[ManagedRecordSnapshot]:
+        """Every authoritative record, reduced to what it can be matched on."""
+        ...
+
+    def link_record(self, record_id: UUID, asset_id: UUID | None) -> None:
+        """Point a record at the asset it describes, or clear the link.
+
+        Clearing matters: a link that was right last month and is wrong now must be
+        removable, or the diff would be stuck defending a stale match.
+        """
+        ...
+
+    def set_management_state(self, asset_id: UUID, state: ManagementState) -> None:
+        """Project what the diff concluded onto the asset. `unknown` is a real answer."""
         ...
 
 

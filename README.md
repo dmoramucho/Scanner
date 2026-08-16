@@ -83,14 +83,14 @@ secret is actually used.
 
 ## Status
 
-**M0 and M1 complete (P1–P9); M2 in progress (P10).** A capture goes end to end: parsers turn an ARP
+**M0, M1 and M2 complete (P1–P11).** A capture goes end to end: parsers turn an ARP
 table, DHCP leases, or mDNS output into provenance-complete observations; the engine calls
 `require_authorized` on every target *before* anything is recorded; the sink writes them
 idempotently into the append-only spine; entity resolution collapses them into assets by stable
 anchors. Three kinds of discovery feed one reconciled inventory: passive (ARP/DHCP/mDNS), active
-(nmap under a gentle, breaker-protected profile), and credentialed (read-only SSH). P10 adds the
-other side of the shadow-IT diff — the organization's own CMDB export, imported into
-`managed_record`. The diff itself is P11. All three
+(nmap under a gentle, breaker-protected profile), and credentialed (read-only SSH). The CMDB export is imported into
+`managed_record` and reconciled against them, so the inventory now answers the question the
+product exists for: **what does nobody manage?** All three
 pass the same scope gate, write through the same append-only spine, and resolve through the same
 entity resolution — so a camera seen three ways is one asset with three kinds of provenance.
 
@@ -125,6 +125,11 @@ What the system guarantees, each proven by tests:
 - **A failure is never an empty success.** A missing binary, non-zero exit, timeout, or
   unparseable output raises a specific domain error; "host is down" is a distinct, explicit
   result.
+- **The shadow-IT number never overclaims.** A CMDB record matches an asset by the same anchor
+  priority the ER uses (`serial › mac › hostname`); anything unresolved — two devices with one
+  name, strong anchors that disagree, a name that only matches once punctuation is deleted, an
+  asset with nothing comparable to look up — becomes *ambiguous*, resolves to `unknown`, and can
+  never be counted as shadow IT. Asserted as an invariant, not as a case (ADR-0009).
 - **A spreadsheet cell is a program, and is treated as one.** Every cell of a CMDB export is
   defanged on import (`=`, `+`, `-`, `@`, tab, CR), so no value can become a live formula in a
   report built on this data later; identity fields must additionally validate, so a formula
@@ -158,8 +163,15 @@ survives. Until someone runs it, "we do not break embedded devices" is a well-te
 intention rather than an observed fact. The runbook also names the gaps it runs into — chiefly that there is
 still no CLI, so the procedure runs from a short script.
 
-Next: P11 completes M2 — deterministic reconciliation of CMDB records against discovered assets
-by the same anchor priority the ER uses, and the bidirectional, confidence-graded diff that
-answers "what does nobody manage?". Then M3: CPE→CVE correlation with NVD/KEV/EPSS, the triage
-dossier, and the grounded insight generator. Deferred by design: vendor inspectors (VAPIX, ISAPI, BusyBox), RLS, live packet
+**Two things fixtures cannot prove, both owed:**
+[`validate-gentle-scan.md`](docs/runbooks/validate-gentle-scan.md) — point a `GENTLE` scan at one
+real device and confirm it survives; and
+[`validate-cmdb-diff.md`](docs/runbooks/validate-cmdb-diff.md) — run the diff against the real
+CMDB and check the shadow-IT list is genuinely unregistered devices rather than matching
+failures. The second also measures the **ambiguous rate**, which is the evidence for whether M3's
+LLM proposer is warranted at all — measured, not assumed (AGENTS.md §4.11).
+
+Next (M3): CPE→CVE correlation with NVD/KEV/EPSS, the triage dossier, and the grounded insight
+generator — plus, if the measured rate justifies it, an LLM proposer for the ambiguous queue
+through the existing propose/dispose pattern. Deferred by design: vendor inspectors (VAPIX, ISAPI, BusyBox), RLS, live packet
 capture, default-credential probing, and any form of exploitation (never).

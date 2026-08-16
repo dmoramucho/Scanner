@@ -584,3 +584,153 @@ class ManagedRecordResult(BaseModel):
 
     record_id: UUID
     created: bool  # False ⇒ the record was already known and has been refreshed
+
+
+# ---------------------------------------------------------------------------
+# m2-design §3, §4 — reconciliation and the shadow-IT diff
+# ---------------------------------------------------------------------------
+
+
+class DiffCategory(StrEnum):
+    """What the diff concluded about one asset or one authoritative record.
+
+    `AMBIGUOUS` is the category that makes the other three trustworthy. Without it, every
+    case we could not resolve would have to be forced into "unmanaged", and the headline
+    shadow-IT number would include our own matching failures — the one thing that would
+    discredit it (m2-design §3).
+    """
+
+    MATCHED = "matched"  # asset ↔ record linked; the healthy baseline
+    UNMANAGED = "unmanaged"  # active asset, nothing in the authoritative source: shadow IT
+    STALE = "stale"  # a record with no discovered asset — may be off, not gone
+    AMBIGUOUS = "ambiguous"  # could not confidently match: a review queue, never a claim
+
+
+class MatchStrength(StrEnum):
+    """How a link was established. Deterministic only in M2 (AGENTS.md §5)."""
+
+    STRONG = "strong"  # serial or MAC — the anchors entity resolution treats as identity
+    WEAK = "weak"  # hostname only — a name is a label, and labels get retyped
+    NONE = "none"
+
+
+class AssetAnchorSet(BaseModel):
+    """An asset reduced to what it can be matched on.
+
+    `ip` anchors are deliberately absent from matching: an address is a locator, not an
+    identity (AGENTS.md §3). An asset carrying nothing else cannot be compared against a
+    CMDB at all, which is a fact the diff reports rather than papers over.
+    """
+
+    asset_id: UUID
+    serials: frozenset[str] = frozenset()
+    macs: frozenset[str] = frozenset()
+    hostnames: frozenset[str] = frozenset()
+
+    @property
+    def has_strong_anchor(self) -> bool:
+        return bool(self.serials or self.macs)
+
+    @property
+    def is_matchable(self) -> bool:
+        """Could this asset ever match a CMDB record? An asset known only by its address
+        cannot, and calling it unmanaged would be claiming something we did not test."""
+        return bool(self.serials or self.macs or self.hostnames)
+
+
+class ManagedRecordSnapshot(BaseModel):
+    """An authoritative record reduced to what it can be matched on."""
+
+    record_id: UUID
+    external_id: str
+    source: ManagedSourceKind
+    serial: str | None = None
+    mac: str | None = None
+    hostname: str | None = None
+
+
+class ReconciliationLink(BaseModel):
+    """A record matched to an asset, and how sure we are.
+
+    `derivation` is `deterministic` and nothing else in M2. The field exists because M3 may
+    add `llm_proposed` links for the ambiguous queue, through the same propose/dispose
+    pattern merges already use (AGENTS.md §2.8, m2-design §3).
+    """
+
+    record_id: UUID
+    asset_id: UUID
+    strength: MatchStrength
+    matched_on: list[str]  # anchor kinds that agreed
+    confidence: Confidence
+    derivation: Literal["deterministic"] = "deterministic"
+
+
+class DiffFinding(BaseModel):
+    """One line of the diff: a claim, its confidence, and what it is about.
+
+    `candidate_asset_ids` is only populated for `AMBIGUOUS` findings — it is the review
+    queue, and the input an M3 proposer would reason over.
+    """
+
+    category: DiffCategory
+    confidence: Confidence
+    reason: str  # human-readable, for the operator who has to act on it
+    asset_id: UUID | None = None
+    record_id: UUID | None = None
+    external_id: str | None = None
+    matched_on: list[str] = Field(default_factory=list)
+    candidate_asset_ids: list[UUID] = Field(default_factory=list)
+
+
+class ShadowItDiff(BaseModel):
+    """The answer to "what does nobody manage?", with its own uncertainty attached.
+
+    The invariant that makes it defensible: `unmanaged` counts only assets we could have
+    matched and did not. Everything we merely failed to resolve is in `ambiguous`, and the
+    two never overlap (m2-design §4).
+    """
+
+    tenant_id: UUID
+    computed_at: datetime  # UTC
+    matched: list[DiffFinding] = Field(default_factory=list)
+    unmanaged: list[DiffFinding] = Field(default_factory=list)
+    stale: list[DiffFinding] = Field(default_factory=list)
+    ambiguous: list[DiffFinding] = Field(default_factory=list)
+
+    @property
+    def shadow_it_count(self) -> int:
+        """The headline number. Only confident cases; an operator can defend every one."""
+        return len(self.unmanaged)
+
+    @property
+    def counts(self) -> dict[str, int]:
+        return {
+            DiffCategory.MATCHED.value: len(self.matched),
+            DiffCategory.UNMANAGED.value: len(self.unmanaged),
+            DiffCategory.STALE.value: len(self.stale),
+            DiffCategory.AMBIGUOUS.value: len(self.ambiguous),
+        }
+
+    @property
+    def ambiguous_assets(self) -> set[UUID]:
+        """Distinct assets left unresolved. Counted by asset rather than by finding: one
+        confusing CMDB row can produce several findings, and that must not look like more
+        unresolved devices than there are."""
+        return {f.asset_id for f in self.ambiguous if f.asset_id is not None}
+
+    @property
+    def assets_considered(self) -> set[UUID]:
+        """Every distinct asset this diff reached a conclusion about."""
+        return {
+            finding.asset_id
+            for finding in (*self.matched, *self.unmanaged, *self.ambiguous)
+            if finding.asset_id is not None
+        }
+
+    @property
+    def ambiguous_rate(self) -> float:
+        """Share of *assets* we could not resolve — the number that says whether
+        deterministic matching is good enough for this estate, or whether M3's proposer is
+        warranted (m2-design §5). Measured before it is acted on."""
+        considered = len(self.assets_considered)
+        return len(self.ambiguous_assets) / considered if considered else 0.0
