@@ -17,6 +17,7 @@ unmanaged-device (shadow-IT) diff, confidence-based noise reduction, and grounde
 | [`docs/data/asset-dossier-contract.md`](docs/data/asset-dossier-contract.md) | The redacted, typed object the LLM reasons over |
 | [`docs/data/data-model.md`](docs/data/data-model.md) | The schema of record; applied by `0001_expand` |
 | [`docs/adr/`](docs/adr/) | One ADR per material decision |
+| [`docs/runbooks/`](docs/runbooks/) | Operator procedures — including the real-device scan validation |
 | `domain/` | The deterministic core: models, ports, errors. **stdlib + pydantic only** |
 | `adapters/postgres/` | `ScopeAuthority`, `ObservationSink`, `AssetRepository` over Postgres — the only place psycopg lives |
 | `adapters/collector/` | Passive discovery (ARP / DHCP / mDNS). Read-only and store-free by construction |
@@ -80,13 +81,14 @@ secret is actually used.
 
 ## Status
 
-**M0 complete (P1–P4); M1 in progress (P5–P7).** A capture goes end to end: parsers turn an ARP
+**M0 and M1 complete (P1–P8).** A capture goes end to end: parsers turn an ARP
 table, DHCP leases, or mDNS output into provenance-complete observations; the engine calls
 `require_authorized` on every target *before* anything is recorded; the sink writes them
 idempotently into the append-only spine; entity resolution collapses them into assets by stable
-anchors. P5 added the `ActiveScanner` port and its nmap adapter; P6 added the engine that drives it —
-classify the device, pick a profile, scan through the same scope gate, and stop against any
-device that stops answering.
+anchors. Three kinds of discovery now feed one reconciled inventory: passive (ARP/DHCP/mDNS), active
+(nmap under a gentle, breaker-protected profile), and credentialed (read-only SSH). All three
+pass the same scope gate, write through the same append-only spine, and resolve through the same
+entity resolution — so a camera seen three ways is one asset with three kinds of provenance.
 
 What the system guarantees, each proven by tests:
 
@@ -117,6 +119,10 @@ What the system guarantees, each proven by tests:
 - **A failure is never an empty success.** A missing binary, non-zero exit, timeout, or
   unparseable output raises a specific domain error; "host is down" is a distinct, explicit
   result.
+- **Ground truth outranks inference.** A credentialed read projects `version_source=
+  'package_manager'` components over the banner-inferred ones for that asset; the superseded rows
+  are retired, never deleted, so what we believed on an earlier date is still answerable
+  (ADR-0006).
 - **Credentials reach the wire and nothing else.** The SSH inspector resolves its credential
   through `SecretsPort`, holds a redacting `Secret`, and calls `reveal()` on exactly one line —
   a test greps the package and fails if it appears anywhere else. No log record, exception,
@@ -129,8 +135,14 @@ What the system guarantees, each proven by tests:
   driver; the scanner imports no database driver and never `shell=True`; the inspector touches
   no store (`tests/test_adapter_boundaries.py`).
 
-Next: P8 wires credentialed inspection into the ingestion path and the ER, so
-`version_source='package_manager'` ground truth reaches the asset graph, plus the real-target
-validation runbook that fixtures cannot stand in for. Deferred by design: vendor inspectors
-(VAPIX, ISAPI, BusyBox), RLS, live packet capture, CPE→CVE correlation (M3), default-credential
-probing, and any form of exploitation (never).
+**One thing fixtures cannot prove, and it is owed:**
+[`docs/runbooks/validate-gentle-scan.md`](docs/runbooks/validate-gentle-scan.md) is the procedure
+for pointing a `GENTLE` scan at one real device, under real authorisation, and confirming it
+survives. Until someone runs it, "we do not break embedded devices" is a well-tested design
+intention rather than an observed fact. The runbook also names the gaps it runs into: there is no
+CLI yet, and no `HealthProbe` adapter, so the circuit breaker has no live sense organ outside
+tests.
+
+Next (M2/M3): CPE→CVE correlation with NVD/KEV/EPSS, the triage dossier, and the grounded insight
+generator. Deferred by design: vendor inspectors (VAPIX, ISAPI, BusyBox), RLS, live packet
+capture, default-credential probing, and any form of exploitation (never).
