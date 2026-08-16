@@ -49,6 +49,10 @@ MATCH_TABLES = {"vulnerability_match"}
 #: tenant-scoped: a published advisory is a fact about software in the world.
 ADVISORY_TABLES = {"advisory_document"}
 
+#: What `0007_triage_insight` adds — the last two tables in the design. Named in the dossier
+#: contract since M0 and deliberately not created until Half B needed them (AGENTS.md §5).
+INSIGHT_TABLES = {"triage_snapshot", "insight"}
+
 EXPECTED_TABLES = (
     EXPAND_TABLES
     | SOFTWARE_TABLES
@@ -56,14 +60,10 @@ EXPECTED_TABLES = (
     | SIGNAL_CACHE_TABLES
     | MATCH_TABLES
     | ADVISORY_TABLES
+    | INSIGHT_TABLES
 )
 
-#: Still not created by anything — they arrive with the features that need them
-#: (AGENTS.md §5). `triage_snapshot` and `insight` belong to Half B, which has not been
-#: built and must not be until Half A is verified (m3-design §1).
-DEFERRED_TABLES = {"triage_snapshot", "insight"}
-
-HEAD_REVISION = "0006_advisory_cache"
+HEAD_REVISION = "0007_triage_insight"
 
 
 def _table_names(url: str) -> set[str]:
@@ -134,12 +134,17 @@ def test_downgrading_one_step_removes_only_the_latest_revision(scratch_database:
     assert alembic("downgrade", "-1", url=scratch_database).returncode == 0
 
     remaining = _table_names(scratch_database)
-    assert remaining & ADVISORY_TABLES == set()
+    assert remaining & INSIGHT_TABLES == set()
     # earlier revisions untouched
     assert remaining >= (
-        EXPAND_TABLES | SOFTWARE_TABLES | CVE_CACHE_TABLES | SIGNAL_CACHE_TABLES | MATCH_TABLES
+        EXPAND_TABLES
+        | SOFTWARE_TABLES
+        | CVE_CACHE_TABLES
+        | SIGNAL_CACHE_TABLES
+        | MATCH_TABLES
+        | ADVISORY_TABLES
     )
-    assert _current_revision(scratch_database) == "0005_vulnerability_match"
+    assert _current_revision(scratch_database) == "0006_advisory_cache"
 
 
 def test_upgrade_is_recorded_at_the_expected_revision(scratch_database: str) -> None:
@@ -148,9 +153,24 @@ def test_upgrade_is_recorded_at_the_expected_revision(scratch_database: str) -> 
     assert _current_revision(scratch_database) == HEAD_REVISION
 
 
-def test_the_deferred_m2_m3_tables_are_still_not_created(scratch_database: str) -> None:
-    """Scope discipline, asserted: `insight` and friends arrive with the features that
-    need them, not early (AGENTS.md §5)."""
+def test_the_insight_safety_constraints_exist_at_head(scratch_database: str) -> None:
+    """The three constraints the whole AI containment rests on, asserted to exist in a
+    freshly-migrated database rather than only in the one the tests happen to share.
+
+    A migration that created `insight` without these would give the model somewhere to write
+    an ungrounded or KEV-hiding row (dossier contract §7).
+    """
     assert alembic("upgrade", "head", url=scratch_database).returncode == 0
 
-    assert _table_names(scratch_database) & DEFERRED_TABLES == set()
+    with psycopg.connect(scratch_database) as conn:
+        rows = conn.execute(
+            "select conname from pg_constraint where conrelid = 'insight'::regclass"
+        ).fetchall()
+
+    names = {str(row[0]) for row in rows}
+    assert {
+        "insight_must_be_grounded",
+        "insight_kev_not_hidden",
+        "insight_derivation",
+        "insight_review_recorded",
+    } <= names

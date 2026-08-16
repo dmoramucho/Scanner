@@ -29,7 +29,10 @@ from domain.models import (
     EpssScore,
     FeedFetchReport,
     FeedSnapshot,
+    Identifier,
     InsightProposal,
+    InsightRecord,
+    InsightReviewState,
     InspectionResult,
     IPAddress,
     KevEntry,
@@ -37,9 +40,12 @@ from domain.models import (
     ManagedRecordResult,
     ManagedRecordSnapshot,
     ManagementState,
+    MatchForTriage,
     MergeRequest,
+    ModelCompletion,
     ObservationInput,
     ObservationRecord,
+    ObservationSnapshot,
     ScanProfile,
     ScanResult,
     ScopeDecision,
@@ -541,4 +547,98 @@ class InsightGenerator(Protocol):
         """Produce a grounded, advisory InsightProposal. Raises GroundingError if the model
         output cites nothing; raises ValidationError on a KEV-hiding recommendation. Never
         suppresses a finding; never uses out-of-band CVE knowledge."""
+        ...
+
+
+class DossierSource(Protocol):
+    """Everything the dossier assembler is allowed to read.
+
+    A read port rather than a repository: the assembler projects an *allowlist* out of what
+    this returns (dossier contract §4), and keeping the read narrow is half of that. What
+    comes back is deliberately raw — observation payloads as collectors wrote them — because
+    the redaction has to happen in one auditable place rather than being assumed at each
+    query.
+    """
+
+    def asset(self, tenant_id: UUID, asset_id: UUID) -> AssetView | None:
+        """The asset itself, or None. Tenant-scoped: an asset is never read cross-tenant."""
+        ...
+
+    def identifiers(self, tenant_id: UUID, asset_id: UUID) -> Sequence[Identifier]:
+        """The identity anchors, which the contract includes verbatim."""
+        ...
+
+    def software(self, tenant_id: UUID, asset_id: UUID) -> Sequence[SoftwareComponent]:
+        """Current components — the crux of vulnerability reasoning."""
+        ...
+
+    def observations(
+        self, tenant_id: UUID, asset_id: UUID, *, limit: int = 500
+    ) -> Sequence[ObservationSnapshot]:
+        """Recent observations, newest first. Payloads are untrusted and un-redacted."""
+        ...
+
+    def managed_by(self, tenant_id: UUID, asset_id: UUID) -> Sequence[str]:
+        """Which managed-source classes know this asset (`["ad", "mdm"]`).
+
+        Empty is the shadow-IT signal, and it is context the insight is entitled to: a
+        vulnerability on a device nobody manages is a different problem (m3-design §3).
+        """
+        ...
+
+
+class TriageStore(Protocol):
+    """Persistence for the insight path: the immutable snapshot, then the proposal.
+
+    The order is the contract. The snapshot is written *first* and never changes, so what
+    the model was given is always reconstructable — an insight whose evidence cannot be
+    reproduced is not auditable, and this system's whole claim is that it is (dossier
+    contract §2, §8).
+    """
+
+    def pending_matches(self, tenant_id: UUID, *, limit: int = 100) -> Sequence[MatchForTriage]:
+        """Deterministic matches with no insight yet, KEV and highest-confidence first."""
+        ...
+
+    def record_snapshot(self, triage: TriageDossier) -> UUID:
+        """Persist exactly what the model will see. Immutable once written."""
+        ...
+
+    def record_insight(self, insight: InsightProposal) -> InsightRecord:
+        """Persist a validated proposal. The database refuses an ungrounded one
+        (`insight_must_be_grounded`) and a KEV-hiding one (`insight_kev_not_hidden`) — the
+        generator has already refused both, and this is the backstop."""
+        ...
+
+    def review_insight(
+        self, insight_id: UUID, *, state: InsightReviewState, reviewer: str
+    ) -> InsightProposal:
+        """Advance a proposal through human review, recording who and when.
+
+        Forward only: `proposed → human_reviewed → accepted`. The insight is advisory until
+        a human says otherwise, which is the point of the state existing at all
+        (AGENTS.md §2.8).
+        """
+        ...
+
+    def insight(self, insight_id: UUID) -> InsightProposal | None: ...
+
+    def snapshot(self, triage_id: UUID) -> TriageDossier | None:
+        """The retained snapshot behind an insight — what the model actually saw."""
+        ...
+
+
+class ModelClient(Protocol):
+    """The model seam, kept as small as a seam can be.
+
+    One method, two strings in, text out. Everything that makes the insight trustworthy —
+    the prompt, the parsing, the grounding checks, the KEV rule — lives above this and is
+    therefore testable without a model (AGENTS.md §43). The implementing adapter runs a
+    **local or self-hosted** model, because the dossier is corporate asset data and it does
+    not leave the perimeter (AGENTS.md §2.10, ADR-0014).
+    """
+
+    def complete(self, *, system: str, user: str) -> ModelCompletion:
+        """Run one completion. Raises `DependencyError(retryable=…)` if the model is
+        unreachable — never a fabricated or empty completion (AGENTS.md §67)."""
         ...

@@ -46,6 +46,17 @@ CORRELATION_MODULES = [
 #: what it produces lives in P16 and never in here (m3-design §3).
 ADVISORY_MODULES = sorted((REPO_ROOT / "adapters" / "advisory").rglob("*.py"))
 
+#: The insight path's deterministic half: dossier assembly and the redaction allowlist. The
+#: model reasons *about* what these produce and never participates in producing it.
+INSIGHT_ENGINE_MODULES = [
+    REPO_ROOT / "engine" / "dossier.py",
+    REPO_ROOT / "engine" / "redaction.py",
+    REPO_ROOT / "engine" / "triage.py",
+]
+
+#: The model boundary itself.
+LLM_MODULES = sorted((REPO_ROOT / "adapters" / "llm").rglob("*.py"))
+
 #: Half A of M3 is deterministic by construction (m3-design §1). A model's CVE knowledge is
 #: stale and hallucinated CVE ids are its most characteristic failure (AGENTS.md §4.8), so
 #: the feed must never acquire one — not even "just to summarise a description".
@@ -212,3 +223,71 @@ def test_the_sanitizer_is_the_only_way_advisory_text_reaches_the_evidence() -> N
 
     assert "sanitize(record.description" in source
     assert "sanitize(response.body.decode" in source
+
+
+@pytest.mark.parametrize("module_path", INSIGHT_ENGINE_MODULES, ids=lambda p: p.name)
+def test_the_insight_engine_imports_no_model(module_path: Path) -> None:
+    """Assembly, redaction and orchestration are deterministic.
+
+    The model is called through a port, from `engine/triage.py`, and it reasons over what
+    these modules produce. A model client imported *here* could decide what goes into a
+    dossier — which is to say, decide what the redaction allowlist means (AGENTS.md §2.8).
+    """
+    imported = {root for root, _ in imported_roots(module_path)}
+
+    assert imported & MODEL_PACKAGES == set()
+
+
+@pytest.mark.parametrize("module_path", INSIGHT_ENGINE_MODULES, ids=lambda p: p.name)
+def test_the_insight_engine_depends_on_ports_not_adapters(module_path: Path) -> None:
+    """The engine names no adapter: it takes `DossierSource`, `AdvisoryRetriever`,
+    `InsightGenerator` and `TriageStore`, and would work the same over any of them."""
+    source = module_path.read_text(encoding="utf-8")
+
+    assert "adapters" not in source
+    assert "psycopg" not in source
+
+
+@pytest.mark.parametrize("module_path", LLM_MODULES, ids=lambda p: p.name)
+def test_the_model_adapter_stays_out_of_the_store(module_path: Path) -> None:
+    """The generator holds a `ModelClient` and nothing else. Database access here would be a
+    second path to CVE knowledge — precisely the path AGENTS.md §4.8 closes."""
+    imported = {root for root, _ in imported_roots(module_path)}
+
+    assert "psycopg" not in imported
+    assert "adapters.postgres" not in module_path.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("module_path", LLM_MODULES, ids=lambda p: p.name)
+def test_the_model_adapter_reaches_no_feed_and_no_cache(module_path: Path) -> None:
+    """Structural grounding. The model's entire knowledge of a CVE is the `AdvisoryEvidence`
+    inside the dossier it is handed; there is no feed, cache or retriever on this side of the
+    port to supplement it with (AGENTS.md §4.8, m3-design §3)."""
+    source = module_path.read_text(encoding="utf-8")
+
+    assert "adapters.feed" not in source
+    assert "AdvisoryRetriever" not in source
+    assert "VulnerabilityFeed" not in source
+
+
+def test_the_prompt_is_built_only_from_the_triage_dossier() -> None:
+    """The one input rule, asserted structurally: `build_user_prompt` takes a
+    `TriageDossier` and reads nothing else. If it grew a second parameter, something outside
+    the retained snapshot would be reaching the model — and the snapshot would no longer
+    reconstruct what it saw (dossier contract §8.1)."""
+    import inspect
+
+    from adapters.llm.prompt import build_user_prompt
+
+    signature = inspect.signature(build_user_prompt)
+
+    assert list(signature.parameters) == ["triage"]
+
+
+def test_advisory_text_is_sanitized_on_the_way_into_the_prompt() -> None:
+    """P15 sanitises on the way in; the prompt builder sanitises again on the way out. The
+    second pass is what makes the guarantee independent of how a dossier was assembled."""
+    source = (REPO_ROOT / "adapters" / "llm" / "prompt.py").read_text(encoding="utf-8")
+
+    assert "sanitize(advisory.advisory_text)" in source
+    assert "from adapters.advisory.sanitize import" in source

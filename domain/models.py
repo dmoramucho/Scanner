@@ -1050,3 +1050,67 @@ class AdvisoryRetrievalReport(BaseModel):
     #: Control/format characters removed: chat-template tokens, zero-width and bidi marks.
     neutralized_control_tokens: int = 0
     truncated_documents: int = 0
+
+
+# ---------------------------------------------------------------------------
+# m3-design §3 — insight generation (Half B; the contained model boundary)
+# ---------------------------------------------------------------------------
+
+
+class ObservationSnapshot(BaseModel):
+    """One observation as the dossier assembler reads it.
+
+    `payload` is deliberately typed as it is stored: a free-shaped dict written by a
+    collector. The assembler treats it as untrusted and projects an *allowlist* out of it —
+    this model carries the raw shape precisely so the redaction happens in one auditable
+    place rather than being assumed at the read (dossier contract §4).
+    """
+
+    observation_id: UUID
+    observation_type: str
+    payload: dict[str, Any]
+    provenance: Provenance
+    observed_at: datetime  # UTC
+
+
+class MatchForTriage(BaseModel):
+    """A deterministic match, ready to be reasoned about.
+
+    The match itself is never re-decided downstream: the model reasons about what it
+    *means*, never about whether it is real (AGENTS.md §2.8).
+    """
+
+    match_id: UUID
+    tenant_id: UUID
+    asset_id: UUID
+    match: VulnerabilityMatch
+
+
+class ModelCompletion(BaseModel):
+    """What a model returned, and which model returned it.
+
+    `text` is untrusted input like any other external response — it is parsed defensively
+    and validated against the dossier before any of it becomes an insight (AGENTS.md §2.9).
+    """
+
+    text: str
+    model_version: str
+
+
+#: What an insight may recommend. `lower_priority` is the only one that can make a finding
+#: less visible, which is why it is the one the generator holds to a higher standard.
+Recommendation = Literal["raise_priority", "lower_priority", "maintain"]
+
+
+#: The states a human review can move an insight into. `proposed` is where every insight
+#: starts and is deliberately absent: nothing can move an insight *back* to un-reviewed
+#: (dossier contract §7).
+InsightReviewState = Literal["human_reviewed", "accepted"]
+
+
+class InsightRecord(BaseModel):
+    """The outcome of persisting one insight and the snapshot behind it."""
+
+    insight_id: UUID
+    triage_id: UUID
+    created: bool

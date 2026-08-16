@@ -84,7 +84,7 @@ secret is actually used.
 
 ## Status
 
-**M0, M1 and M2 complete (P1–P11); M3 Half A complete (P12–P14); Half B grounding in place (P15).** A capture goes end to end: parsers turn an ARP
+**M0–M3 complete (P1–P16).** A capture goes end to end: parsers turn an ARP
 table, DHCP leases, or mDNS output into provenance-complete observations; the engine calls
 `require_authorized` on every target *before* anything is recorded; the sink writes them
 idempotently into the append-only spine; entity resolution collapses them into assets by stable
@@ -152,6 +152,26 @@ What the system guarantees, each proven by tests:
   fix patch behind the CVE, attributes each piece to the source it came from, and derives
   `fix_touched_summary` from the diff's own subject line and changed paths — or leaves it empty.
   No advisory text raises rather than returning grounding that is an empty string (ADR-0013).
+- **A secret cannot reach the model.** The dossier the LLM reasons over is an allowlist
+  projection of the contract's §4 fields — a key nobody named is dropped, a `config` observation
+  contributes only derived flags and never the file, and a value *shaped* like a credential is
+  dropped even under a permitted key. The assembled dossier is then swept, and a dossier still
+  holding something secret-shaped is refused rather than stripped: if we do not know how it got
+  through, we do not know what else did (ADR-0014).
+- **The AI cannot fabricate, and cannot bury.** An insight that cites nothing is rejected before
+  persistence — and "cites something" is checked, not taken on trust: every citation must resolve
+  to the supplied advisory or to a path that exists in the dossier, and a quote must actually
+  appear in the text it quotes. A rationale naming any CVE other than the match's is refused as
+  recall. A KEV-listed finding cannot be de-prioritised by any recommendation. Three database
+  CHECKs (`insight_must_be_grounded`, `insight_kev_not_hidden`, `derivation = 'llm_generated'`)
+  restate all of it one layer down.
+- **What the model saw is kept, immutably.** The `TriageDossier` snapshot is written *before* the
+  model is called and carries the append-only trigger, so a refused or failed generation still
+  leaves the evidence behind — and every insight can be replayed against exactly the input that
+  produced it.
+- **The model runs inside the perimeter.** The client refuses any endpoint that is not loopback,
+  private or explicitly internal, at construction. No model SDK was added: the wire format is
+  OpenAI-compatible, so Ollama, llama.cpp, vLLM and LM Studio all work and CI needs none of them.
 - **Hostile advisory text is defanged at the boundary, before it is cached.** A CVE description
   is written by people — sometimes the people whose software the CVE is about — and it ends up
   inside a prompt. Chat-template tokens, envelope tags, invisible and bidi characters, and
@@ -218,7 +238,14 @@ split a safety barrier rather than an ordering preference, because code where an
 "decide" whether a vulnerability exists is exactly where it would inject a false negative into a
 security system.
 
-**Half B has started with its grounding channel, not its model.** The `AdvisoryRetriever`
+**M3 is complete, and so is the platform's first full answer.** A capture becomes an asset;
+an asset becomes an inventory; the inventory answers *what does nobody manage*; correlation
+answers *what is vulnerable*; and the insight path answers *what does it actually mean* — with a
+local model that reasons only over a redacted dossier and an advisory somebody actually published,
+and that cannot fabricate a vulnerability, leak a secret, or hide an exploited finding. It
+recommends; a human accepts. Nothing closes itself.
+
+**Half B started with its grounding channel, not its model.** The `AdvisoryRetriever`
 fetches the *real* advisory text and the fix patch behind a CVE, quotes them with their sources
 attached, and derives what the fix touched from the diff itself — so every claim an insight will
 later make traces to a document a human can open (AGENTS.md §4.8). Two properties are asserted:
@@ -226,7 +253,10 @@ hostile advisory content is neutralised **before it is cached**, so no ordering 
 can route attacker-written text into a prompt (ADR-0013); and no advisory text raises rather than
 returning empty grounding, so the generator will be able to refuse instead of recalling.
 
-Next is the model itself: the `InsightGenerator`, the `TriageDossier` assembly, and grounded,
-cited, advisory insight *on top of* matches Half A already made — propose/dispose, KEV-sticky,
-ungrounded insights rejected before persistence. Deferred by design: vendor inspectors (VAPIX, ISAPI, BusyBox), RLS, live packet
-capture, default-credential probing, and any form of exploitation (never).
+Deliberately still absent, and next when they are wanted (AGENTS.md §5): the `check` module and
+`verified_exploitable` (proving exploitability rather than inferring it), LLM-proposed entity
+matching for M2's ambiguous queue, a CLI and a UI, and vendor inspectors (VAPIX, ISAPI, BusyBox).
+Both manual runbooks — `validate-gentle-scan.md` and `validate-cmdb-diff.md` — remain unrun
+against real hardware, and running them is the last thing between this and a pilot. Deferred by
+design: RLS, live packet capture, default-credential probing, and any form of exploitation
+(never).
