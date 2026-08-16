@@ -952,6 +952,21 @@ class ConfidenceState(StrEnum):
     VERIFIED_EXPLOITABLE = "verified_exploitable"  # reserved; never set here
 
 
+class Priority(StrEnum):
+    """The band an analyst works from, derived by rule and carrying its own reason.
+
+    Four bands, because the point is a worklist an analyst can actually work top-down —
+    not a 0–100 score nobody can explain (ux-design §2: the competitor's failure is noise).
+    The rules that produce these live in `engine/priority.py`, in the open, and every match
+    stores the rule that decided it (ADR-0015).
+    """
+
+    P1 = "p1"  # act now — exploited in the wild, or confirmed and likely to be
+    P2 = "p2"  # schedule — confirmed and severe, or exploited-probable awaiting verification
+    P3 = "p3"  # plan / verify — real but not urgent, or unverified and severe
+    P4 = "p4"  # informational — low signal on every axis
+
+
 class ComponentSnapshot(BaseModel):
     """A component reduced to what correlation needs: what it is, and how well we know it."""
 
@@ -981,6 +996,21 @@ class VulnerabilityMatchInput(BaseModel):
     confidence_state: ConfidenceState
     kev: bool = False
     epss: Annotated[float, Field(ge=0.0, le=1.0)] | None = None
+
+    #: CVSS as the feed published it. `None` means the source carried no score — never a
+    #: substituted default, because a guessed severity is a guessed priority (AGENTS.md §3).
+    cvss_score: Annotated[float, Field(ge=0.0, le=10.0)] | None = None
+    cvss_vector: str | None = None
+    cvss_version: str | None = None
+
+    #: The band, and the rule that produced it. All three are required, with no defaults:
+    #: a priority that cannot say why it is a priority is the unexplainable number this
+    #: product exists to displace, and the type system refuses one the same way the CHECK
+    #: `vuln_match_priority_explained` does (ux-design §2, ADR-0015).
+    priority: Priority
+    priority_rule: Annotated[str, Field(min_length=1)]
+    priority_reason: Annotated[str, Field(min_length=1)]
+
     derivation: Literal["deterministic"] = "deterministic"
     run_id: UUID | None = None
 
@@ -1106,6 +1136,62 @@ Recommendation = Literal["raise_priority", "lower_priority", "maintain"]
 #: starts and is deliberately absent: nothing can move an insight *back* to un-reviewed
 #: (dossier contract §7).
 InsightReviewState = Literal["human_reviewed", "accepted"]
+
+
+class ReviewOutcome(StrEnum):
+    """What a human decided about an insight.
+
+    Distinct from `state`, and deliberately so. The dossier contract fixes the lifecycle at
+    `proposed → human_reviewed → accepted`; a *rejection* leaves an insight reviewed and not
+    accepted, which that lifecycle cannot express on its own. So the outcome is recorded
+    beside the state rather than by widening a contract type (ADR-0015).
+    """
+
+    ACCEPTED = "accepted"  # the analyst agrees with the model's recommendation
+    REJECTED = "rejected"  # the analyst disagrees; the insight stays visible and unaccepted
+    ADJUSTED = "adjusted"  # the analyst substitutes their own recommendation
+
+
+class InsightReview(BaseModel):
+    """One human decision about one insight.
+
+    `recommendation` is the analyst's own call, required for an adjustment and refused
+    otherwise: an "adjustment" that adjusts nothing is a state change wearing the wrong
+    label, and the database says the same thing (`insight_review_adjust_has_change`).
+    """
+
+    insight_id: UUID
+    outcome: ReviewOutcome
+    reviewer: str  # who; never blank
+    recommendation: Recommendation | None = None  # the analyst's, not the model's
+    rationale: str | None = None
+
+    @property
+    def resulting_state(self) -> InsightReviewState:
+        """Accepting advances the lifecycle; rejecting and adjusting record that a human
+        looked. Derived rather than passed in, so the two can never disagree."""
+        if self.outcome is ReviewOutcome.ACCEPTED:
+            return "accepted"
+        return "human_reviewed"
+
+
+class InsightReviewEvent(BaseModel):
+    """One immutable entry in an insight's review history.
+
+    The same shape and the same discipline as `asset_merge_event`: the current-state columns
+    on `insight` are a projection for fast reads, and this is the record of what actually
+    happened (data-model §4). Append-only in the database.
+    """
+
+    event_id: UUID
+    insight_id: UUID
+    kind: Literal["accept", "reject", "adjust", "state_change"]
+    from_state: Literal["proposed", "human_reviewed", "accepted"]
+    to_state: Literal["proposed", "human_reviewed", "accepted"]
+    reviewer: str
+    recommendation: Recommendation | None = None
+    rationale: str | None = None
+    occurred_at: datetime  # UTC
 
 
 class InsightRecord(BaseModel):

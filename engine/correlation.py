@@ -47,11 +47,13 @@ from domain.models import (
     ConfidenceState,
     CpeMatch,
     CveRecord,
+    Priority,
     VersionSource,
     VulnerabilityMatchInput,
 )
 from domain.ports import EpssSource, KevSource, VulnerabilityFeed, VulnerabilityMatchStore
 from engine.cpe import RangeVerdict, parse_cpe, version_in_range
+from engine.priority import PriorityInputs, derive_priority
 
 #: Version evidence good enough to call a match `confirmed`. Both are the device or its
 #: manufacturer stating what is installed, rather than a service advertising a string.
@@ -72,6 +74,8 @@ class CorrelationOutcome:
     matches: int = 0
     new_matches: int = 0
     kev_matches: int = 0
+    #: Matches that landed in the top band — the number an operator actually reacts to.
+    p1_matches: int = 0
     confirmed: int = 0
     probable: int = 0
     #: CVEs the feed returned whose version range excluded this component. Counted because
@@ -160,6 +164,21 @@ class VulnerabilityCorrelator:
             score = self._epss.score_for(cve.cve_id)
 
             confidence = derive_confidence_state(component.version_source, verdict)
+            epss = score.score if score is not None else None
+
+            # The band and the sentence behind it, derived here from evidence that is all
+            # already in hand — and stored, so the interface never re-derives a priority or
+            # invents an explanation for one (ux-design §2, ADR-0015).
+            band = derive_priority(
+                PriorityInputs(
+                    cve_id=cve.cve_id,
+                    confidence_state=confidence,
+                    kev=kev,
+                    epss=epss,
+                    cvss_score=cve.cvss_score,
+                )
+            )
+
             record = self._store.record_match(
                 VulnerabilityMatchInput(
                     tenant_id=component.tenant_id,
@@ -170,7 +189,15 @@ class VulnerabilityCorrelator:
                     version_source=component.version_source,
                     confidence_state=confidence,
                     kev=kev,
-                    epss=score.score if score is not None else None,
+                    epss=epss,
+                    # Carried from the feed record, never computed here: a CVE with no
+                    # published score keeps `None` rather than a substituted zero.
+                    cvss_score=cve.cvss_score,
+                    cvss_vector=cve.cvss_vector,
+                    cvss_version=cve.cvss_version,
+                    priority=band.priority,
+                    priority_rule=band.rule_id,
+                    priority_reason=band.reason,
                     run_id=run_id,
                 )
             )
@@ -178,6 +205,7 @@ class VulnerabilityCorrelator:
             state.matches += 1
             state.new_matches += int(record.created)
             state.kev_matches += int(kev)
+            state.p1 += int(band.priority is Priority.P1)
             if confidence is ConfidenceState.CONFIRMED:
                 state.confirmed += 1
             else:
@@ -283,6 +311,7 @@ class _RunState:
     matches: int = 0
     new_matches: int = 0
     kev_matches: int = 0
+    p1: int = 0
     confirmed: int = 0
     probable: int = 0
     filtered: int = 0
@@ -297,6 +326,7 @@ class _RunState:
             matches=self.matches,
             new_matches=self.new_matches,
             kev_matches=self.kev_matches,
+            p1_matches=self.p1,
             confirmed=self.confirmed,
             probable=self.probable,
             filtered_out_of_range=self.filtered,

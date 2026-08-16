@@ -25,7 +25,9 @@ from domain.models import (
     CitedSource,
     Derivation,
     InsightProposal,
+    InsightReview,
     ManagementState,
+    ReviewOutcome,
     TriageDossier,
 )
 from tests.builders import CVE, asset_dossier, triage_dossier
@@ -251,8 +253,19 @@ def test_a_human_review_is_recorded_with_who_and_when(conn: Connection, tenant: 
     store.record_snapshot(triage)
     record = store.record_insight(proposal(triage))
 
-    reviewed = store.review_insight(record.insight_id, state="human_reviewed", reviewer="dmora")
-    accepted = store.review_insight(record.insight_id, state="accepted", reviewer="dmora")
+    reviewed = store.review_insight(
+        InsightReview(
+            insight_id=record.insight_id,
+            outcome=ReviewOutcome.REJECTED,
+            reviewer="dmora",
+            rationale="The affected module is not loaded on this host.",
+        )
+    )
+    accepted = store.review_insight(
+        InsightReview(
+            insight_id=record.insight_id, outcome=ReviewOutcome.ACCEPTED, reviewer="dmora"
+        )
+    )
 
     assert reviewed.state == "human_reviewed"
     assert accepted.state == "accepted"
@@ -270,10 +283,20 @@ def test_a_review_cannot_run_backwards(conn: Connection, tenant: UUID) -> None:
     store = PostgresTriageStore(conn)
     store.record_snapshot(triage)
     record = store.record_insight(proposal(triage))
-    store.review_insight(record.insight_id, state="accepted", reviewer="dmora")
+    store.review_insight(
+        InsightReview(
+            insight_id=record.insight_id, outcome=ReviewOutcome.ACCEPTED, reviewer="dmora"
+        )
+    )
 
     with pytest.raises(ValidationError, match="forward-only"):
-        store.review_insight(record.insight_id, state="human_reviewed", reviewer="someone-else")
+        store.review_insight(
+            InsightReview(
+                insight_id=record.insight_id,
+                outcome=ReviewOutcome.REJECTED,
+                reviewer="someone-else",
+            )
+        )
 
 
 def test_a_review_must_name_a_reviewer(conn: Connection, tenant: UUID) -> None:
@@ -283,12 +306,18 @@ def test_a_review_must_name_a_reviewer(conn: Connection, tenant: UUID) -> None:
     record = store.record_insight(proposal(triage))
 
     with pytest.raises(ValidationError):
-        store.review_insight(record.insight_id, state="accepted", reviewer="   ")
+        store.review_insight(
+            InsightReview(
+                insight_id=record.insight_id, outcome=ReviewOutcome.ACCEPTED, reviewer="   "
+            )
+        )
 
 
 def test_reviewing_an_insight_that_does_not_exist_raises(conn: Connection) -> None:
     with pytest.raises(NotFoundError):
-        PostgresTriageStore(conn).review_insight(uuid4(), state="accepted", reviewer="dmora")
+        PostgresTriageStore(conn).review_insight(
+            InsightReview(insight_id=uuid4(), outcome=ReviewOutcome.ACCEPTED, reviewer="dmora")
+        )
 
 
 # ------------------------------------------------------------------ reading the estate
@@ -301,9 +330,11 @@ def test_pending_matches_are_kev_first(conn: Connection, tenant: UUID) -> None:
         conn.execute(
             """
             insert into vulnerability_match (tenant_id, asset_id, cve_id, matched_cpe,
-                version_source, confidence_state, kev, epss, derivation)
+                version_source, confidence_state, kev, epss, derivation,
+                priority, priority_rule, priority_reason)
             values (%s, %s, %s, 'cpe:2.3:a:v:p:1:*:*:*:*:*:*:*', 'package_manager',
-                    'confirmed', %s, %s, 'deterministic')
+                    'confirmed', %s, %s, 'deterministic',
+                    'p1', 'kev-actively-exploited', 'seeded for this test')
             """,
             (tenant, asset_id, cve, kev, epss),
         )
@@ -333,3 +364,246 @@ def test_the_dossier_source_returns_the_asset_as_the_contract_expects(
     assert asset is not None
     assert asset.asset_class is AssetClass.SERVER
     assert asset.management_state is ManagementState.UNMANAGED
+
+
+# --------------------------------------------------------------- the review history
+
+
+def test_a_review_writes_an_immutable_event(conn: Connection, tenant: UUID) -> None:
+    """The current-state columns are the summary an analyst's list view reads; this is the
+    record of what actually happened. Same discipline as `asset_merge_event`
+    (data-model §4)."""
+    triage = snapshot_for(conn, tenant)
+    store = PostgresTriageStore(conn)
+    store.record_snapshot(triage)
+    record = store.record_insight(proposal(triage))
+
+    store.review_insight(
+        InsightReview(
+            insight_id=record.insight_id,
+            outcome=ReviewOutcome.ACCEPTED,
+            reviewer="dmora",
+            rationale="Agreed — the host is internet-facing.",
+        )
+    )
+    history = store.review_history(record.insight_id)
+
+    assert len(history) == 1
+    assert history[0].kind == "accept"
+    assert history[0].from_state == "proposed"
+    assert history[0].to_state == "accepted"
+    assert history[0].reviewer == "dmora"
+    assert history[0].rationale == "Agreed — the host is internet-facing."
+    assert history[0].occurred_at is not None
+
+
+def test_the_review_event_table_refuses_update_and_delete(conn: Connection, tenant: UUID) -> None:
+    """A review history that can be edited afterwards is not a history."""
+    triage = snapshot_for(conn, tenant)
+    store = PostgresTriageStore(conn)
+    store.record_snapshot(triage)
+    record = store.record_insight(proposal(triage))
+    store.review_insight(
+        InsightReview(
+            insight_id=record.insight_id, outcome=ReviewOutcome.ACCEPTED, reviewer="dmora"
+        )
+    )
+
+    with pytest.raises(psycopg.errors.RaiseException):
+        conn.execute("update insight_review_event set reviewer = 'someone else'")
+
+
+def test_a_review_event_cannot_be_deleted(conn: Connection, tenant: UUID) -> None:
+    triage = snapshot_for(conn, tenant)
+    store = PostgresTriageStore(conn)
+    store.record_snapshot(triage)
+    record = store.record_insight(proposal(triage))
+    store.review_insight(
+        InsightReview(
+            insight_id=record.insight_id, outcome=ReviewOutcome.ACCEPTED, reviewer="dmora"
+        )
+    )
+
+    with pytest.raises(psycopg.errors.RaiseException):
+        conn.execute("delete from insight_review_event")
+
+
+def test_the_history_reads_back_in_order(conn: Connection, tenant: UUID) -> None:
+    triage = snapshot_for(conn, tenant)
+    store = PostgresTriageStore(conn)
+    store.record_snapshot(triage)
+    record = store.record_insight(proposal(triage))
+
+    store.review_insight(
+        InsightReview(
+            insight_id=record.insight_id,
+            outcome=ReviewOutcome.ADJUSTED,
+            reviewer="ana",
+            recommendation="maintain",
+            rationale="Right finding, wrong urgency.",
+        )
+    )
+    store.review_insight(
+        InsightReview(
+            insight_id=record.insight_id, outcome=ReviewOutcome.ACCEPTED, reviewer="dmora"
+        )
+    )
+
+    history = store.review_history(record.insight_id)
+
+    assert [event.kind for event in history] == ["adjust", "accept"]
+    assert [event.reviewer for event in history] == ["ana", "dmora"]
+    assert history[0].recommendation == "maintain"
+
+
+def test_the_projection_and_the_event_commit_together(conn: Connection, tenant: UUID) -> None:
+    """One transaction, like the merge path. A current-state column that can disagree with
+    its own event log is worse than not having the column."""
+    triage = snapshot_for(conn, tenant)
+    store = PostgresTriageStore(conn)
+    store.record_snapshot(triage)
+    record = store.record_insight(proposal(triage))
+
+    store.review_insight(
+        InsightReview(
+            insight_id=record.insight_id,
+            outcome=ReviewOutcome.REJECTED,
+            reviewer="dmora",
+            rationale="Not reachable from the network this sits on.",
+        )
+    )
+
+    row = conn.execute(
+        "select state, review_outcome, reviewed_by from insight where id = %s",
+        (record.insight_id,),
+    ).fetchone()
+    history = store.review_history(record.insight_id)
+
+    assert row is not None
+    # A rejection is reviewed-and-not-accepted: the contract's lifecycle cannot say that on
+    # its own, so the outcome column says it instead (ADR-0015).
+    assert row[0] == "human_reviewed"
+    assert row[1] == "rejected"
+    assert row[2] == "dmora"
+    assert [event.kind for event in history] == ["reject"]
+
+
+def test_an_adjustment_records_the_analysts_own_recommendation(
+    conn: Connection, tenant: UUID
+) -> None:
+    """The model's `recommendation` is evidence of what it said and is never overwritten;
+    the human's call lands beside it."""
+    triage = snapshot_for(conn, tenant)
+    store = PostgresTriageStore(conn)
+    store.record_snapshot(triage)
+    record = store.record_insight(proposal(triage, recommendation="raise_priority"))
+
+    store.review_insight(
+        InsightReview(
+            insight_id=record.insight_id,
+            outcome=ReviewOutcome.ADJUSTED,
+            reviewer="ana",
+            recommendation="maintain",
+        )
+    )
+
+    row = conn.execute(
+        "select recommendation, analyst_recommendation from insight where id = %s",
+        (record.insight_id,),
+    ).fetchone()
+
+    assert row is not None
+    assert row[0] == "raise_priority"  # the model's, untouched
+    assert row[1] == "maintain"  # the analyst's, recorded
+
+
+def test_an_adjustment_that_adjusts_nothing_is_refused(conn: Connection, tenant: UUID) -> None:
+    triage = snapshot_for(conn, tenant)
+    store = PostgresTriageStore(conn)
+    store.record_snapshot(triage)
+    record = store.record_insight(proposal(triage))
+
+    with pytest.raises(ValidationError, match="analyst's recommendation"):
+        store.review_insight(
+            InsightReview(
+                insight_id=record.insight_id, outcome=ReviewOutcome.ADJUSTED, reviewer="ana"
+            )
+        )
+
+
+def test_the_analyst_cannot_bury_a_kev_finding_either(conn: Connection, tenant: UUID) -> None:
+    """The UX is explicit: neither the AI nor the analyst gets to hide an actively-exploited
+    finding. The same rule as the model's, and the DB CHECK
+    `insight_analyst_kev_not_hidden` says it too."""
+    triage = snapshot_for(conn, tenant, kev=True)
+    store = PostgresTriageStore(conn)
+    store.record_snapshot(triage)
+    record = store.record_insight(proposal(triage))
+
+    with pytest.raises(ValidationError, match="KEV"):
+        store.review_insight(
+            InsightReview(
+                insight_id=record.insight_id,
+                outcome=ReviewOutcome.ADJUSTED,
+                reviewer="ana",
+                recommendation="lower_priority",
+            )
+        )
+
+    with pytest.raises(psycopg.errors.CheckViolation):
+        conn.execute(
+            "update insight set analyst_recommendation = 'lower_priority' where id = %s",
+            (record.insight_id,),
+        )
+
+
+def test_a_match_stores_its_cvss_and_its_priority_reason(conn: Connection, tenant: UUID) -> None:
+    """What the interface reads: the score NVD published, the band, and the sentence that
+    explains the band — none of it re-derived at read time (ux-design §2)."""
+    asset_id = seed_asset(conn, tenant)
+    conn.execute(
+        """
+        insert into vulnerability_match (tenant_id, asset_id, cve_id, matched_cpe,
+            version_source, confidence_state, kev, epss, cvss_score, cvss_vector,
+            cvss_version, priority, priority_rule, priority_reason, derivation)
+        values (%s, %s, 'CVE-2023-25690', 'cpe:2.3:a:v:p:1:*:*:*:*:*:*:*', 'package_manager',
+                'confirmed', true, 0.42, 9.8, 'CVSS:3.1/AV:N', '3.1',
+                'p1', 'kev-actively-exploited', 'CISA lists it as known exploited.',
+                'deterministic')
+        """,
+        (tenant, asset_id),
+    )
+
+    row = conn.execute(
+        "select cvss_score, cvss_version, priority, priority_rule, priority_reason "
+        "from vulnerability_match where tenant_id = %s",
+        (tenant,),
+    ).fetchone()
+
+    assert row is not None
+    assert row[0] == 9.8
+    assert row[1] == "3.1"
+    assert row[2] == "p1"
+    assert row[3] == "kev-actively-exploited"
+    assert row[4]
+
+
+def test_the_database_refuses_a_priority_with_no_explanation(
+    conn: Connection, tenant: UUID
+) -> None:
+    """The constraint that keeps the band trustworthy. A priority nobody can explain is the
+    competitor's failure this product displaces — the schema will not store one."""
+    asset_id = seed_asset(conn, tenant)
+
+    with pytest.raises(psycopg.errors.CheckViolation) as raised:
+        conn.execute(
+            """
+            insert into vulnerability_match (tenant_id, asset_id, cve_id, matched_cpe,
+                version_source, confidence_state, priority, priority_rule, priority_reason)
+            values (%s, %s, 'CVE-2023-25690', 'cpe:2.3:a:v:p:1:*:*:*:*:*:*:*',
+                    'package_manager', 'confirmed', 'p1', 'kev-actively-exploited', '  ')
+            """,
+            (tenant, asset_id),
+        )
+
+    assert "vuln_match_priority_explained" in str(raised.value)

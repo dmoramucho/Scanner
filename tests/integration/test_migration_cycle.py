@@ -53,6 +53,11 @@ ADVISORY_TABLES = {"advisory_document"}
 #: contract since M0 and deliberately not created until Half B needed them (AGENTS.md §5).
 INSIGHT_TABLES = {"triage_snapshot", "insight"}
 
+#: What `0008_ux_alignment` adds — the review history the UX shows beside the current state.
+#: The CVSS and priority columns it also adds are asserted in `tests/integration/
+#: test_triage_store.py`, where a row can actually be written.
+REVIEW_TABLES = {"insight_review_event"}
+
 EXPECTED_TABLES = (
     EXPAND_TABLES
     | SOFTWARE_TABLES
@@ -61,9 +66,10 @@ EXPECTED_TABLES = (
     | MATCH_TABLES
     | ADVISORY_TABLES
     | INSIGHT_TABLES
+    | REVIEW_TABLES
 )
 
-HEAD_REVISION = "0007_triage_insight"
+HEAD_REVISION = "0008_ux_alignment"
 
 
 def _table_names(url: str) -> set[str]:
@@ -134,7 +140,7 @@ def test_downgrading_one_step_removes_only_the_latest_revision(scratch_database:
     assert alembic("downgrade", "-1", url=scratch_database).returncode == 0
 
     remaining = _table_names(scratch_database)
-    assert remaining & INSIGHT_TABLES == set()
+    assert remaining & REVIEW_TABLES == set()
     # earlier revisions untouched
     assert remaining >= (
         EXPAND_TABLES
@@ -143,8 +149,9 @@ def test_downgrading_one_step_removes_only_the_latest_revision(scratch_database:
         | SIGNAL_CACHE_TABLES
         | MATCH_TABLES
         | ADVISORY_TABLES
+        | INSIGHT_TABLES
     )
-    assert _current_revision(scratch_database) == "0006_advisory_cache"
+    assert _current_revision(scratch_database) == "0007_triage_insight"
 
 
 def test_upgrade_is_recorded_at_the_expected_revision(scratch_database: str) -> None:

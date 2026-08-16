@@ -24,6 +24,7 @@ from domain.models import (
     VersionSource,
     VulnerabilityMatchInput,
 )
+from engine.priority import PriorityInputs, derive_priority
 
 pytestmark = pytest.mark.integration
 
@@ -93,7 +94,19 @@ def match(
     confidence: ConfidenceState = ConfidenceState.CONFIRMED,
     kev: bool = False,
     epss: float | None = 0.5,
+    cvss_score: float | None = 9.8,
 ) -> VulnerabilityMatchInput:
+    # The band is derived the same way the correlator derives it, so these rows are the
+    # rows the engine actually writes — including the explanation the CHECK insists on.
+    band = derive_priority(
+        PriorityInputs(
+            cve_id=cve_id,
+            confidence_state=confidence,
+            kev=kev,
+            epss=epss,
+            cvss_score=cvss_score,
+        )
+    )
     return VulnerabilityMatchInput(
         tenant_id=tenant,
         asset_id=asset_id,
@@ -104,6 +117,12 @@ def match(
         confidence_state=confidence,
         kev=kev,
         epss=epss,
+        cvss_score=cvss_score,
+        cvss_vector="CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H" if cvss_score else None,
+        cvss_version="3.1" if cvss_score else None,
+        priority=band.priority,
+        priority_rule=band.rule_id,
+        priority_reason=band.reason,
     )
 
 

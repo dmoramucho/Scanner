@@ -84,7 +84,7 @@ secret is actually used.
 
 ## Status
 
-**M0–M3 complete (P1–P16).** A capture goes end to end: parsers turn an ARP
+**M0–M3 complete (P1–P17).** A capture goes end to end: parsers turn an ARP
 table, DHCP leases, or mDNS output into provenance-complete observations; the engine calls
 `require_authorized` on every target *before* anything is recorded; the sink writes them
 idempotently into the append-only spine; entity resolution collapses them into assets by stable
@@ -158,6 +158,17 @@ What the system guarantees, each proven by tests:
   dropped even under a permitted key. The assembled dossier is then swept, and a dossier still
   holding something secret-shaped is refused rather than stripped: if we do not know how it got
   through, we do not know what else did (ADR-0014).
+- **Priority is a rule, not a score.** Every match carries a band (P1–P4), the id of the rule
+  that produced it, and a sentence naming the evidence and the threshold it cleared — "CISA
+  lists CVE-… as known exploited", "EPSS puts exploitation at 42% and the version is confirmed
+  from the package database". The thresholds are published ones (FIRST's EPSS cuts, CVSS v3's
+  own severity boundaries), not numbers chosen because they felt right. A KEV finding is P1
+  whatever else is true, and a floor makes it impossible for any rule to put one below P2. The
+  database refuses a band with no explanation attached (ADR-0015).
+- **VLAN is inferred, and says so.** With no switch access, a device's segment comes from an
+  operator-configured subnet map, marked `inferred` with a confidence below 1.0 so nothing can
+  render it as measured. An address outside every mapped range is *unknown* — no nearest match,
+  no default VLAN.
 - **The AI cannot fabricate, and cannot bury.** An insight that cites nothing is rejected before
   persistence — and "cites something" is checked, not taken on trust: every citation must resolve
   to the supplied advisory or to a path that exists in the dossier, and a quote must actually

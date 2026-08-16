@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any, Final, Literal
 from uuid import UUID
 
@@ -34,12 +34,14 @@ from domain.models import (
     Identifier,
     InsightProposal,
     InsightRecord,
-    InsightReviewState,
+    InsightReview,
+    InsightReviewEvent,
     ManagementState,
     MatchForTriage,
     ObservationSnapshot,
     Provenance,
     Recommendation,
+    ReviewOutcome,
     SoftwareComponent,
     TriageDossier,
     VersionSource,
@@ -128,9 +130,29 @@ _INSIGHT_READ_SQL: Final = """
 
 _REVIEW_SQL: Final = """
     update insight set state = %(state)s, reviewed_by = %(reviewer)s,
+                       review_outcome = %(outcome)s,
+                       analyst_recommendation = coalesce(%(recommendation)s,
+                                                         analyst_recommendation),
                        reviewed_at = now(), updated_at = now()
     where id = %(id)s
     returning id
+"""
+
+_REVIEW_EVENT_SQL: Final = """
+    insert into insight_review_event (
+        tenant_id, insight_id, kind, from_state, to_state, recommendation, reviewer, rationale
+    ) values (
+        %(tenant_id)s, %(insight_id)s, %(kind)s, %(from_state)s, %(to_state)s,
+        %(recommendation)s, %(reviewer)s, %(rationale)s
+    )
+"""
+
+_REVIEW_HISTORY_SQL: Final = """
+    select id, insight_id, kind, from_state, to_state, recommendation, reviewer, rationale,
+           occurred_at
+    from insight_review_event
+    where insight_id = %(insight_id)s
+    order by occurred_at, id
 """
 
 
@@ -338,28 +360,98 @@ class PostgresTriageStore:
             raise ConflictError("insight was not written")
         return InsightRecord(insight_id=row[0], triage_id=insight.triage_id, created=True)
 
-    def review_insight(
-        self, insight_id: UUID, *, state: InsightReviewState, reviewer: str
-    ) -> InsightProposal:
-        """Move a proposal forward through human review, recording who and when."""
-        name = reviewer.strip()
+    def review_insight(self, review: InsightReview) -> InsightProposal:
+        """Record one human decision — the projection and the history, together.
+
+        The two writes commit as one transaction, exactly as the merge path does: a
+        current-state column that can disagree with its own event log is worse than having
+        no column at all (data-model §4).
+        """
+        name = review.reviewer.strip()
         if not name:
             raise ValidationError("a review must record who performed it")
+        if review.outcome is ReviewOutcome.ADJUSTED and review.recommendation is None:
+            # An adjustment that adjusts nothing is a state change wearing the wrong label.
+            # The DB says so too (`insight_review_adjust_has_change`).
+            raise ValidationError("an adjusted review must carry the analyst's recommendation")
 
-        current = self.insight(insight_id)
+        current = self.insight(review.insight_id)
         if current is None:
-            raise NotFoundError(f"no insight {insight_id}")
-        if _REVIEW_ORDER.index(state) <= _REVIEW_ORDER.index(current.state):
+            raise NotFoundError(f"no insight {review.insight_id}")
+
+        target = review.resulting_state
+        if _REVIEW_ORDER.index(target) < _REVIEW_ORDER.index(current.state):
             # Forward only. Re-reviewing backwards would quietly erase a human decision.
             raise ValidationError(
-                f"cannot move an insight from {current.state} to {state}; review is forward-only"
+                f"cannot move an insight from {current.state} to {target}; review is forward-only"
+            )
+        if current.kev_locked_visible and review.recommendation == "lower_priority":
+            # The rule the model is held to, applied to the human. The UX is explicit that
+            # neither may bury an actively-exploited finding; the DB CHECK agrees.
+            raise ValidationError(
+                "refusing to record an analyst recommendation that hides a KEV-listed finding"
             )
 
-        self._conn.execute(_REVIEW_SQL, {"id": insight_id, "state": state, "reviewer": name})
-        reviewed = self.insight(insight_id)
+        with self._conn.transaction():
+            self._conn.execute(
+                _REVIEW_SQL,
+                {
+                    "id": review.insight_id,
+                    "state": target,
+                    "reviewer": name,
+                    "outcome": review.outcome.value,
+                    "recommendation": review.recommendation,
+                },
+            )
+            self._conn.execute(
+                _REVIEW_EVENT_SQL,
+                {
+                    "tenant_id": self._tenant_of(review.insight_id),
+                    "insight_id": review.insight_id,
+                    "kind": _EVENT_KINDS[review.outcome],
+                    "from_state": current.state,
+                    "to_state": target,
+                    "recommendation": review.recommendation,
+                    "reviewer": name,
+                    "rationale": review.rationale,
+                },
+            )
+
+        reviewed = self.insight(review.insight_id)
         if reviewed is None:  # pragma: no cover — it existed a statement ago
-            raise NotFoundError(f"no insight {insight_id}")
+            raise NotFoundError(f"no insight {review.insight_id}")
         return reviewed
+
+    def review_history(self, insight_id: UUID) -> Sequence[InsightReviewEvent]:
+        """Every decision on this insight, oldest first."""
+        rows = self._conn.execute(_REVIEW_HISTORY_SQL, {"insight_id": insight_id}).fetchall()
+        return [
+            InsightReviewEvent(
+                event_id=row[0],
+                insight_id=row[1],
+                kind=_lookup(_EVENT_KIND_VALUES, str(row[2]), what="review event kind"),
+                from_state=_lookup(_REVIEW_STATES, str(row[3]), what="insight state"),
+                to_state=_lookup(_REVIEW_STATES, str(row[4]), what="insight state"),
+                recommendation=(
+                    None
+                    if row[5] is None
+                    else _lookup(_RECOMMENDATIONS, str(row[5]), what="recommendation")
+                ),
+                reviewer=str(row[6]),
+                rationale=_text_or_none(row[7]),
+                occurred_at=row[8],
+            )
+            for row in rows
+        ]
+
+    def _tenant_of(self, insight_id: UUID) -> UUID:
+        row = self._conn.execute(
+            "select tenant_id from insight where id = %(id)s", {"id": insight_id}
+        ).fetchone()
+        if row is None:  # pragma: no cover — the caller has already read the insight
+            raise NotFoundError(f"no insight {insight_id}")
+        tenant_id: UUID = row[0]
+        return tenant_id
 
     def insight(self, insight_id: UUID) -> InsightProposal | None:
         row = self._conn.execute(_INSIGHT_READ_SQL, {"id": insight_id}).fetchone()
@@ -408,6 +500,22 @@ _RECOMMENDATIONS: Final[dict[str, Recommendation]] = {
     "lower_priority": "lower_priority",
     "maintain": "maintain",
 }
+EventKind = Literal["accept", "reject", "adjust", "state_change"]
+
+#: One decision, one event kind. The mapping is explicit so a new outcome cannot silently
+#: land in the history as something it is not.
+_EVENT_KINDS: Final[dict[ReviewOutcome, EventKind]] = {
+    ReviewOutcome.ACCEPTED: "accept",
+    ReviewOutcome.REJECTED: "reject",
+    ReviewOutcome.ADJUSTED: "adjust",
+}
+_EVENT_KIND_VALUES: Final[dict[str, EventKind]] = {
+    "accept": "accept",
+    "reject": "reject",
+    "adjust": "adjust",
+    "state_change": "state_change",
+}
+
 _REVIEW_STATES: Final[dict[str, ReviewState]] = {
     "proposed": "proposed",
     "human_reviewed": "human_reviewed",
@@ -415,7 +523,7 @@ _REVIEW_STATES: Final[dict[str, ReviewState]] = {
 }
 
 
-def _lookup[T](table: dict[str, T], value: str, *, what: str) -> T:
+def _lookup[T](table: Mapping[str, T], value: str, *, what: str) -> T:
     """A stored value, narrowed to its contract type — or a named failure.
 
     The database CHECKs already restrict every one of these columns. Reading them back

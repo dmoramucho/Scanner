@@ -19,9 +19,12 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Final
 
+from domain.errors import ValidationError
 from domain.secret import Secret
+from engine.segments import SubnetVlanMap
 
 
 class ConfigError(Exception):
@@ -107,6 +110,10 @@ class AppConfig:
     region: str
     log_level: str
     nvd: NvdSettings
+    #: Operator-supplied subnet → VLAN mapping. Empty is valid and means every asset's
+    #: segment is *unknown*, which is the honest default when nobody has described the
+    #: network (ADR-0015).
+    vlan_map: SubnetVlanMap
 
 
 def load_config(env: Mapping[str, str] | None = None) -> AppConfig:
@@ -177,4 +184,36 @@ def load_config(env: Mapping[str, str] | None = None) -> AppConfig:
             max_retries=int(positive_number("SCANNER_NVD_MAX_RETRIES")),
             cache_ttl_hours=positive_number("SCANNER_NVD_CACHE_TTL_HOURS"),
         ),
+        vlan_map=_vlan_map(source),
     )
+
+
+def _vlan_map(source: Mapping[str, str]) -> SubnetVlanMap:
+    """The subnet → VLAN mapping, from inline JSON or a file, validated now.
+
+    Validated at startup rather than at first use, because a mapping an operator got wrong
+    would otherwise mislabel devices for months before anyone noticed — and a label is the
+    difference between "a camera on the isolated IoT VLAN" and "a camera on the server
+    segment" (AGENTS.md §6).
+    """
+    inline = source.get("SCANNER_VLAN_MAP", "").strip()
+    path = source.get("SCANNER_VLAN_MAP_FILE", "").strip()
+    if inline and path:
+        raise ConfigError(
+            "set SCANNER_VLAN_MAP or SCANNER_VLAN_MAP_FILE, not both; two mappings cannot "
+            "both be the mapping"
+        )
+
+    document = inline
+    if path:
+        try:
+            document = Path(path).read_text(encoding="utf-8")
+        except OSError as exc:
+            raise ConfigError(f"SCANNER_VLAN_MAP_FILE could not be read: {exc}") from exc
+
+    try:
+        return SubnetVlanMap.from_json(document)
+    except ValidationError as exc:
+        # Re-raised as a config error: this is an operator's mapping, and it fails at
+        # startup rather than silently producing unlabelled or mislabelled assets.
+        raise ConfigError(f"SCANNER_VLAN_MAP is invalid: {exc}") from exc

@@ -28,6 +28,7 @@ from domain.models import (
     CveRecord,
     EpssScore,
     FeedFetchReport,
+    Priority,
     VersionSource,
     VulnerabilityMatchInput,
     VulnerabilityMatchRecord,
@@ -50,11 +51,16 @@ def cve(
     cve_id: str = "CVE-2024-27316",
     *,
     matches: Sequence[CpeMatch] | None = None,
+    cvss_score: float | None = 7.5,
+    cvss_vector: str | None = "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+    cvss_version: str | None = "3.1",
 ) -> CveRecord:
     return CveRecord(
         cve_id=cve_id,
         description="a flaw",
-        cvss_score=7.5,
+        cvss_score=cvss_score,
+        cvss_vector=cvss_vector,
+        cvss_version=cvss_version,
         cpe_matches=list(matches) if matches is not None else [CpeMatch(criteria=APACHE_ANY)],
         fetched_at=NOW,
         raw_record_ref=f"nvd:{cve_id}",
@@ -618,3 +624,84 @@ def test_a_validation_error_from_the_feed_fails_the_component_not_the_run() -> N
     assert outcome.failed == 1
     assert outcome.complete is False
     assert store.recorded == []
+
+
+# ------------------------------------------------------- what the interface reads (P17)
+
+
+def test_a_match_carries_the_cvss_the_feed_published() -> None:
+    """CVSS is a fetched fact with provenance, not something correlation computes. It is
+    carried through from the NVD record so a UI can show severity beside the band."""
+    engine, store = correlator(FakeFeed([cve()]))
+
+    engine.correlate([component()])
+
+    recorded = store.recorded[0]
+    assert recorded.cvss_score == 7.5
+    assert recorded.cvss_vector == "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+    assert recorded.cvss_version == "3.1"
+
+
+def test_a_cve_with_no_published_cvss_leaves_it_null() -> None:
+    """Not zero, and not a substituted default. A guessed severity becomes a guessed
+    priority, and the whole point of the band is that it is explainable (AGENTS.md §3)."""
+    engine, store = correlator(
+        FakeFeed([cve(cvss_score=None, cvss_vector=None, cvss_version=None)])
+    )
+
+    engine.correlate([component()])
+
+    recorded = store.recorded[0]
+    assert recorded.cvss_score is None
+    assert recorded.cvss_vector is None
+    assert recorded.cvss_version is None
+
+
+def test_every_match_is_written_with_a_band_and_the_rule_behind_it() -> None:
+    """The correlator derives the priority once, at match time, from evidence it already
+    holds — and stores the explanation with it so nothing downstream re-derives either."""
+    engine, store = correlator(FakeFeed([cve()]))
+
+    engine.correlate([component()])
+
+    recorded = store.recorded[0]
+    assert recorded.priority in set(Priority)
+    assert recorded.priority_rule
+    assert recorded.cve_id in recorded.priority_reason
+
+
+def test_a_kev_match_is_written_as_p1() -> None:
+    """The path from CISA's catalog to the top of an analyst's worklist, end to end."""
+    engine, store = correlator(FakeFeed([cve()]), kev=FakeKev(exploited={"CVE-2024-27316"}))
+
+    outcome = engine.correlate([component()])
+
+    assert store.recorded[0].priority is Priority.P1
+    assert store.recorded[0].priority_rule == "kev-actively-exploited"
+    assert outcome.p1_matches == 1
+
+
+def test_a_banner_derived_match_is_never_written_as_p1() -> None:
+    """`probable` is a verification queue, not a patch queue — asserted here at the layer
+    that actually writes the row, not only in the rules module."""
+    engine, store = correlator(FakeFeed([cve()]), epss=FakeEpss(scores={"CVE-2024-27316": 0.9}))
+
+    engine.correlate([component(version_source=VersionSource.BANNER)])
+
+    assert store.recorded[0].priority is not Priority.P1
+
+
+def test_re_correlating_the_same_component_produces_the_same_band() -> None:
+    """Idempotent: the band is a pure function of evidence that has not changed, so a
+    nightly re-run does not churn the worklist an analyst is working through."""
+    engine, store = correlator(FakeFeed([cve()]))
+
+    engine.correlate([component()])
+    engine.correlate([component()])
+
+    first, second = store.recorded
+    assert (first.priority, first.priority_rule, first.priority_reason) == (
+        second.priority,
+        second.priority_rule,
+        second.priority_reason,
+    )

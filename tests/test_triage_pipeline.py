@@ -30,7 +30,8 @@ from domain.models import (
     Identifier,
     InsightProposal,
     InsightRecord,
-    InsightReviewState,
+    InsightReview,
+    InsightReviewEvent,
     ManagementState,
     MatchForTriage,
     ModelCompletion,
@@ -116,9 +117,12 @@ class FakeStore:
         )
 
     def review_insight(
-        self, insight_id: UUID, *, state: InsightReviewState, reviewer: str
+        self, review: InsightReview
     ) -> InsightProposal:  # pragma: no cover — the store's own tests cover review
         raise NotImplementedError
+
+    def review_history(self, insight_id: UUID) -> Sequence[InsightReviewEvent]:  # pragma: no cover
+        return []
 
     def insight(self, insight_id: UUID) -> InsightProposal | None:  # pragma: no cover
         return None

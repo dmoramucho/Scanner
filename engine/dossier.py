@@ -44,6 +44,7 @@ from domain.models import (
     EmbeddedContext,
     ExposureBlock,
     GenericContext,
+    Identifier,
     ManagementBlock,
     ObservationSnapshot,
     Observed,
@@ -55,6 +56,7 @@ from domain.models import (
 )
 from domain.ports import DossierSource
 from engine.redaction import assert_no_secrets, project, security_flags
+from engine.segments import SubnetVlanMap
 
 #: Bumped when the projection changes shape. Recorded on every dossier and on every retained
 #: snapshot, so an old insight can always be read against the rules that produced it.
@@ -81,10 +83,14 @@ class DossierAssembler:
         self,
         source: DossierSource,
         *,
+        segments: SubnetVlanMap | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         new_id: Callable[[], UUID] = uuid4,
     ) -> None:
         self._source = source
+        # An absent map is not a broken assembler: every asset's segment is simply unknown,
+        # which is the honest answer until an operator describes the network (ADR-0015).
+        self._segments = segments if segments is not None else SubnetVlanMap()
         self._clock = clock
         self._new_id = new_id
         self._report = AssemblyReport()
@@ -102,9 +108,10 @@ class DossierAssembler:
 
         assembled_at = self._clock()
         observations = list(self._source.observations(tenant_id, asset_id))
+        identifiers = list(self._source.identifiers(tenant_id, asset_id))
         dropped = 0
 
-        exposure, exposure_dropped = self._exposure(observations)
+        exposure, exposure_dropped = self._exposure(observations, identifiers, assembled_at)
         context, context_dropped = self._context(asset.asset_class, observations)
         dropped += exposure_dropped + context_dropped
 
@@ -115,7 +122,7 @@ class DossierAssembler:
             assembled_at=assembled_at,
             assembler_version=ASSEMBLER_VERSION,
             asset_class=asset.asset_class,
-            identifiers=list(self._source.identifiers(tenant_id, asset_id)),
+            identifiers=identifiers,
             software=list(self._source.software(tenant_id, asset_id)),
             exposure=exposure,
             management=ManagementBlock(
@@ -141,7 +148,12 @@ class DossierAssembler:
 
     # --------------------------------------------------------------------- blocks
 
-    def _exposure(self, observations: Sequence[ObservationSnapshot]) -> tuple[ExposureBlock, int]:
+    def _exposure(
+        self,
+        observations: Sequence[ObservationSnapshot],
+        identifiers: Sequence[Identifier],
+        at: datetime,
+    ) -> tuple[ExposureBlock, int]:
         """Reachability, the segment *label*, and open ports with normalized service names."""
         dropped = 0
         reachability: Observed[Reachability] | None = None
@@ -176,8 +188,14 @@ class DossierAssembler:
             # Unknown is a value, and the honest one. A dossier that omitted reachability
             # would invite the model to assume the comfortable answer.
             reachability = Observed(
-                value=Reachability.UNKNOWN, provenance=self._derived_provenance(self._clock())
+                value=Reachability.UNKNOWN, provenance=self._derived_provenance(at)
             )
+
+        if segment is None:
+            # Nothing observed the segment — nothing can, without switch access. Infer it
+            # from the operator's subnet map, marked `inferred`, or leave it unknown. There
+            # is deliberately no third option (ADR-0015).
+            segment = self._inferred_segment(identifiers, at)
         return ExposureBlock(
             reachability=reachability, network_segment_label=segment, open_ports=ports
         ), dropped
@@ -261,6 +279,18 @@ class DossierAssembler:
                 flags.append(SecurityFlag(key=key, value=value, provenance=observation.provenance))
 
         return facts, flags, services, dropped
+
+    def _inferred_segment(
+        self, identifiers: Sequence[Identifier], at: datetime
+    ) -> Observed[str] | None:
+        """The VLAN label for this asset's address, or None when no mapped range holds it."""
+        for identifier in identifiers:
+            if identifier.kind != "ip":
+                continue
+            label = self._segments.observed_label(identifier.value, at=at)
+            if label is not None:
+                return label
+        return None
 
     def _derived_provenance(self, at: datetime) -> Provenance:
         """Provenance for a value this assembler derived rather than observed.

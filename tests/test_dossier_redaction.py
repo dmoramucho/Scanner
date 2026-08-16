@@ -39,6 +39,7 @@ from engine.redaction import (
     project,
     security_flags,
 )
+from engine.segments import SubnetVlanMap
 from tests.builders import observation
 
 NOW = datetime(2026, 8, 16, 12, 0, tzinfo=UTC)
@@ -482,3 +483,79 @@ def test_assert_no_secrets_accepts_a_clean_dossier() -> None:
     }
 
     assert_no_secrets(payload, where="test")
+
+
+# --------------------------------------------------------------- the inferred segment
+
+
+VLAN_MAP = SubnetVlanMap.from_mapping({"10.0.60.0/24": "VLAN 60 (IoT)"})
+
+
+class AddressedSource(FakeSource):
+    """A source whose asset has an IP identifier, which is what the VLAN map reads."""
+
+    def __init__(self, address: str = "10.0.60.14", **kwargs: object) -> None:
+        super().__init__(**kwargs)  # type: ignore[arg-type]
+        self._address = address
+
+    def identifiers(self, tenant_id: UUID, asset_id: UUID) -> list[Identifier]:
+        return [
+            Identifier(kind="mac", value="00:11:22:33:44:55", confidence=1.0),
+            Identifier(kind="ip", value=self._address, confidence=0.8),
+        ]
+
+
+def test_an_asset_in_a_mapped_range_gets_an_inferred_segment_label() -> None:
+    """The UX shows a device's segment, and there is no switch to ask — so the label comes
+    from the operator's subnet map and says, in its provenance, that it was inferred
+    (ADR-0015)."""
+    engine = DossierAssembler(AddressedSource(), segments=VLAN_MAP, clock=lambda: NOW, new_id=uuid4)
+
+    dossier = engine.assemble(TENANT, ASSET)
+
+    label = dossier.exposure.network_segment_label
+    assert label is not None
+    assert label.value == "VLAN 60 (IoT)"
+    assert label.provenance.source_type == "inferred"
+    assert label.provenance.confidence < 1.0
+
+
+def test_an_asset_outside_every_mapped_range_has_no_segment_label() -> None:
+    """Unknown, not guessed — the same honesty as the ambiguous category in shadow-IT
+    reconciliation. Saying "isolated segment" about a device nobody mapped would be a
+    fabrication an analyst would act on."""
+    engine = DossierAssembler(
+        AddressedSource(address="172.16.9.9"), segments=VLAN_MAP, clock=lambda: NOW, new_id=uuid4
+    )
+
+    dossier = engine.assemble(TENANT, ASSET)
+
+    assert dossier.exposure.network_segment_label is None
+
+
+def test_an_observed_segment_label_outranks_the_inferred_one() -> None:
+    """If anything ever *measures* the segment, the measurement wins. The inference is the
+    fallback, not the answer."""
+    engine = DossierAssembler(
+        AddressedSource(
+            observations=[observation("network", {"network_segment_label": "VLAN 10 (Servers)"})]
+        ),
+        segments=VLAN_MAP,
+        clock=lambda: NOW,
+        new_id=uuid4,
+    )
+
+    dossier = engine.assemble(TENANT, ASSET)
+
+    label = dossier.exposure.network_segment_label
+    assert label is not None
+    assert label.value == "VLAN 10 (Servers)"
+    assert label.provenance.source_type != "inferred"
+
+
+def test_an_assembler_with_no_map_labels_nothing() -> None:
+    """The default deployment. No mapping configured means every segment is unknown, which
+    is honest rather than broken."""
+    engine = DossierAssembler(AddressedSource(), clock=lambda: NOW, new_id=uuid4)
+
+    assert engine.assemble(TENANT, ASSET).exposure.network_segment_label is None

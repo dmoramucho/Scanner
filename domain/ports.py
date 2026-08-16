@@ -32,7 +32,8 @@ from domain.models import (
     Identifier,
     InsightProposal,
     InsightRecord,
-    InsightReviewState,
+    InsightReview,
+    InsightReviewEvent,
     InspectionResult,
     IPAddress,
     KevEntry,
@@ -610,15 +611,20 @@ class TriageStore(Protocol):
         generator has already refused both, and this is the backstop."""
         ...
 
-    def review_insight(
-        self, insight_id: UUID, *, state: InsightReviewState, reviewer: str
-    ) -> InsightProposal:
-        """Advance a proposal through human review, recording who and when.
+    def review_insight(self, review: InsightReview) -> InsightProposal:
+        """Record one human decision: the current-state update *and* the history event, in
+        one transaction.
 
-        Forward only: `proposed → human_reviewed → accepted`. The insight is advisory until
-        a human says otherwise, which is the point of the state existing at all
-        (AGENTS.md §2.8).
+        Forward only through `proposed → human_reviewed → accepted`. The insight is advisory
+        until a human says otherwise, which is the point of the state existing at all
+        (AGENTS.md §2.8). Both writes commit together, like the merge path — a projection
+        that can disagree with its own history is worse than no projection.
         """
+        ...
+
+    def review_history(self, insight_id: UUID) -> Sequence[InsightReviewEvent]:
+        """Every review decision on this insight, oldest first. Append-only, so this is the
+        record and the columns on `insight` are the summary (data-model §4)."""
         ...
 
     def insight(self, insight_id: UUID) -> InsightProposal | None: ...
