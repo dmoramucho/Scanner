@@ -1,0 +1,77 @@
+# Local-first stack. This is the on-prem production target, not just a dev convenience
+# (AGENTS.md §6): Postgres as the store, MinIO as the raw-record object store, LocalStack
+# as the in-perimeter service stand-in behind SecretsPort.
+#
+# Images are pinned by tag; every credential comes from .env with no fallback, so a
+# missing value fails the stack rather than silently starting with a default password.
+# Every port is published to 127.0.0.1 only: none of this belongs on the LAN.
+# Start with: cp .env.example .env && docker compose up -d
+
+name: scanner
+
+services:
+  postgres:
+    image: postgres:17.11-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required (see .env.example)}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required (see .env.example)}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required (see .env.example)}
+      # Scrypt over the default md5, and no trust auth for host connections.
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256 --auth-local=scram-sha-256"
+      POSTGRES_HOST_AUTH_METHOD: scram-sha-256
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required (see .env.example)}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required (see .env.example)}
+    ports:
+      - "127.0.0.1:${MINIO_PORT:-9000}:9000"
+      - "127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  localstack:
+    # Pinned to the last license-free community line: LocalStack's 2026.x images refuse to
+    # start without a LOCALSTACK_AUTH_TOKEN. Community 4.0.3 covers what M0 needs
+    # (Secrets Manager as the in-perimeter vault stand-in). Revisit if the real on-prem
+    # vault choice lands — that is a P2+ decision, not a scaffold one.
+    image: localstack/localstack:4.0.3
+    environment:
+      SERVICES: secretsmanager
+      DEBUG: ${LOCALSTACK_DEBUG:-0}
+    ports:
+      - "127.0.0.1:${LOCALSTACK_PORT:-4566}:4566"
+    volumes:
+      - localstack-data:/var/lib/localstack
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:4566/_localstack/health || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  minio-data:
+  localstack-data:
