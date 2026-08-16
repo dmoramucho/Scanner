@@ -21,7 +21,7 @@ unmanaged-device (shadow-IT) diff, confidence-based noise reduction, and grounde
 | `adapters/postgres/` | `ScopeAuthority`, `ObservationSink`, `AssetRepository` over Postgres — the only place psycopg lives |
 | `adapters/collector/` | Passive discovery (ARP / DHCP / mDNS). Read-only and store-free by construction |
 | `adapters/scanner/` | Active scanning: the nmap orchestrator. The only place that knows what a scanner flag is |
-| `engine/` | Orchestration; the scope gate runs before anything is recorded |
+| `engine/` | Orchestration; the scope gate runs before anything is recorded, and the scan-safety policy lives here |
 | `config/` | Startup configuration — validated once, fail-fast |
 | `migrations/` | Alembic revisions — hand-written raw SQL, no ORM ([how](migrations/README.md)) |
 | `tests/` | Unit tests, the mechanically enforced `domain/` boundary, and `integration/` against a real Postgres |
@@ -79,11 +79,13 @@ secret is actually used.
 
 ## Status
 
-**M0 complete (P1–P4); M1 in progress (P5).** A capture goes end to end: parsers turn an ARP
+**M0 complete (P1–P4); M1 in progress (P5–P6).** A capture goes end to end: parsers turn an ARP
 table, DHCP leases, or mDNS output into provenance-complete observations; the engine calls
 `require_authorized` on every target *before* anything is recorded; the sink writes them
 idempotently into the append-only spine; entity resolution collapses them into assets by stable
-anchors. P5 adds the `ActiveScanner` port and its nmap adapter — not yet wired into the engine.
+anchors. P5 added the `ActiveScanner` port and its nmap adapter; P6 added the engine that drives it —
+classify the device, pick a profile, scan through the same scope gate, and stop against any
+device that stops answering.
 
 What the system guarantees, each proven by tests:
 
@@ -102,7 +104,12 @@ What the system guarantees, each proven by tests:
 - **Fragile devices get the gentle profile.** The `GENTLE` scan profile means no `-A`, no
   `--version-all`, `--version-intensity 0`, SYN not connect, a `-T2` ceiling, a scan delay,
   capped rate and parallelism, and a curated IoT port set rather than all 65535 — asserted flag
-  by flag, so loosening it fails the build (AGENTS.md §2.7).
+  by flag, so loosening it fails the build (AGENTS.md §2.7). A device that nothing positively
+  identifies as robust is treated as fragile, the same fail-safe direction as deny-by-default.
+- **A device that stops answering stops being scanned.** Health checks bracket every scan; a
+  device that was up before and silent after trips the circuit breaker, which backs off, records
+  the trip as an observation rather than a counter, and moves on. One casualty never aborts the
+  run — three in a row does (ADR-0004).
 - **Nothing goes near a shell.** The nmap invocation is an argument list, and the target is
   validated as a real IP address before any command exists. nmap's XML is parsed as untrusted
   input, with external entities and entity expansion refused (ADR-0003).

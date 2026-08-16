@@ -128,6 +128,30 @@ class ActiveScanner(Protocol):
         ...
 
 
+class HealthProbe(Protocol):
+    """Is this device still answering? The circuit breaker's only sense organ.
+
+    Required by the engine-side safety mechanism in m1-design §2: a health check before
+    and after touching each device, so that a device which stops responding aborts *its*
+    scan rather than being probed further. The probe itself emits a packet, so the engine
+    calls it only after `ScopeAuthority.require_authorized` — a health check is not exempt
+    from the gate (AGENTS.md §2.5).
+
+    An adapter implements this with something cheap and gentle: an ICMP echo, or a TCP
+    connect to a port already known open. It is the lightest touch in the system.
+    """
+
+    def is_responsive(self, target: IPAddress) -> bool:
+        """True if the device answered. False means silence, which the breaker reads as
+        distress when it follows a scan.
+
+        Returns a verdict; it does not raise for a device that simply did not answer. It
+        raises only when the probe itself could not be performed — which the engine treats
+        as a reason not to scan, never as "assume it is fine".
+        """
+        ...
+
+
 class AdvisoryRetriever(Protocol):
     """RAG grounding: the real advisory text and fix diff for a match — never the
     model's memory (AGENTS.md §4.8)."""
