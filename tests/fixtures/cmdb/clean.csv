@@ -1,0 +1,4 @@
+Asset ID,Device Name,S/N,MAC Address,IP,Owner,Site
+CMDB-0001,APP-01.corp.internal,SN-ABC-1234,AA:BB:CC:DD:EE:FF,10.10.5.7,alice@corp.internal,HQ
+CMDB-0002,CAM-LOBBY-01,ACCC8E1F2A3B,00-40-8C-9D-1E-2F,10.10.5.31,facilities@corp.internal,HQ
+CMDB-0003,printer-3f,BR-99-2211,aabbcc001122,10.10.5.20,it@corp.internal,Floor 3

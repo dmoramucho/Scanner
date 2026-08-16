@@ -11,7 +11,7 @@ Three of them are where a rule stops being prose and becomes an enforced contrac
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from typing import Protocol
 from uuid import UUID
 
@@ -24,6 +24,8 @@ from domain.models import (
     InsightProposal,
     InspectionResult,
     IPAddress,
+    ManagedRecordInput,
+    ManagedRecordResult,
     MergeRequest,
     ObservationInput,
     ObservationRecord,
@@ -31,6 +33,7 @@ from domain.models import (
     ScanResult,
     ScopeDecision,
     SoftwareComponent,
+    SourceReadReport,
     TriageDossier,
 )
 from domain.secret import Secret
@@ -170,6 +173,57 @@ class InspectorRegistry(Protocol):
 
     def for_device(self, fingerprint: DeviceFingerprint) -> CredentialedInspector | None:
         """The inspector that can read this device, or None if we have no way in."""
+        ...
+
+
+class ManagedSource(Protocol):
+    """An authoritative inventory: what the organization believes it owns (m2-design §2).
+
+    The CMDB, AD, MDM, EDR — anything whose answer to "is this device ours?" is a matter of
+    record rather than of observation. M2 ships one adapter (a CSV/Excel export); the rest
+    are future adapters behind this same port.
+
+    Rows from these sources are **untrusted input** (AGENTS.md §2.9). A CMDB export is a
+    file a person edited, and it will contain blank rows, malformed cells, and — because
+    spreadsheets are programs — cells that are formulas. An implementation validates and
+    sanitizes before yielding, and it yields only rows that could actually be matched.
+    """
+
+    def records(self, tenant_id: UUID) -> Iterable[ManagedRecordInput]:
+        """Yield the normalized records this source knows about.
+
+        Rows that cannot be used are skipped rather than raised on — one bad line in a
+        4000-row export must not cost the other 3999 — but they are never dropped silently:
+        `read_report()` accounts for every one.
+        """
+        ...
+
+    def read_report(self) -> SourceReadReport:
+        """What the last read did, including every row it refused and why.
+
+        Call after consuming `records()`. This exists because "never silently drop a row"
+        (AGENTS.md §4.4) is only enforceable if the count reaches the caller — a source that
+        could quietly discard half an export while looking successful is exactly the failure
+        this port is meant to preclude.
+        """
+        ...
+
+
+class ManagedRecordSink(Protocol):
+    """The write path into `managed_record`. Idempotent, like the observation spine.
+
+    Re-importing the same export lands once: the store's `(tenant_id, source, external_id)`
+    unique key arbitrates, never a check-then-insert (AGENTS.md §62). A record that already
+    exists is *refreshed* rather than duplicated — a CMDB row's contents legitimately change
+    between exports, and the latest export is the current statement of what is believed.
+    """
+
+    def record(self, entry: ManagedRecordInput) -> ManagedRecordResult:
+        """Insert or refresh one record. `created=False` means it was already known."""
+        ...
+
+    def record_batch(self, batch: Sequence[ManagedRecordInput]) -> list[ManagedRecordResult]:
+        """Batch variant; per-item idempotency, results in input order."""
         ...
 
 

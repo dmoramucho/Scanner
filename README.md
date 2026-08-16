@@ -24,6 +24,7 @@ unmanaged-device (shadow-IT) diff, confidence-based noise reduction, and grounde
 | `adapters/scanner/` | Active scanning: the nmap orchestrator. The only place that knows what a scanner flag is |
 | `adapters/inspector/` | Credentialed reads over SSH — read-only, allow-listed commands, credential-safe |
 | `adapters/probe/` | The circuit breaker's health check: one TCP connect, no data, no root |
+| `adapters/managed/` | Authoritative inventory: the CMDB CSV/Excel reader, untrusted-file-safe |
 | `engine/` | Orchestration; the scope gate runs before anything is recorded, and the scan-safety policy lives here |
 | `config/` | Startup configuration — validated once, fail-fast |
 | `migrations/` | Alembic revisions — hand-written raw SQL, no ORM ([how](migrations/README.md)) |
@@ -82,12 +83,14 @@ secret is actually used.
 
 ## Status
 
-**M0 and M1 complete (P1–P8).** A capture goes end to end: parsers turn an ARP
+**M0 and M1 complete (P1–P9); M2 in progress (P10).** A capture goes end to end: parsers turn an ARP
 table, DHCP leases, or mDNS output into provenance-complete observations; the engine calls
 `require_authorized` on every target *before* anything is recorded; the sink writes them
 idempotently into the append-only spine; entity resolution collapses them into assets by stable
-anchors. Three kinds of discovery now feed one reconciled inventory: passive (ARP/DHCP/mDNS), active
-(nmap under a gentle, breaker-protected profile), and credentialed (read-only SSH). All three
+anchors. Three kinds of discovery feed one reconciled inventory: passive (ARP/DHCP/mDNS), active
+(nmap under a gentle, breaker-protected profile), and credentialed (read-only SSH). P10 adds the
+other side of the shadow-IT diff — the organization's own CMDB export, imported into
+`managed_record`. The diff itself is P11. All three
 pass the same scope gate, write through the same append-only spine, and resolve through the same
 entity resolution — so a camera seen three ways is one asset with three kinds of provenance.
 
@@ -122,6 +125,16 @@ What the system guarantees, each proven by tests:
 - **A failure is never an empty success.** A missing binary, non-zero exit, timeout, or
   unparseable output raises a specific domain error; "host is down" is a distinct, explicit
   result.
+- **A spreadsheet cell is a program, and is treated as one.** Every cell of a CMDB export is
+  defanged on import (`=`, `+`, `-`, `@`, tab, CR), so no value can become a live formula in a
+  report built on this data later; identity fields must additionally validate, so a formula
+  never survives as an anchor the diff would match on. Column names are the operator's
+  configuration, and a mapped column missing from the file is a hard error rather than a
+  silently empty field (ADR-0008).
+- **No row is ever silently dropped.** Blank, unidentifiable, duplicate, oversized — each is
+  refused with a reason and a row number, and `rows_read == imported + skipped` is asserted. A
+  lost row would read as shadow IT in the diff, which is the one false accusation this product
+  cannot afford.
 - **Ground truth outranks inference.** A credentialed read projects `version_source=
   'package_manager'` components over the banner-inferred ones for that asset; the superseded rows
   are retired, never deleted, so what we believed on an earlier date is still answerable
@@ -145,6 +158,8 @@ survives. Until someone runs it, "we do not break embedded devices" is a well-te
 intention rather than an observed fact. The runbook also names the gaps it runs into — chiefly that there is
 still no CLI, so the procedure runs from a short script.
 
-Next (M2/M3): CPE→CVE correlation with NVD/KEV/EPSS, the triage dossier, and the grounded insight
-generator. Deferred by design: vendor inspectors (VAPIX, ISAPI, BusyBox), RLS, live packet
+Next: P11 completes M2 — deterministic reconciliation of CMDB records against discovered assets
+by the same anchor priority the ER uses, and the bidirectional, confidence-graded diff that
+answers "what does nobody manage?". Then M3: CPE→CVE correlation with NVD/KEV/EPSS, the triage
+dossier, and the grounded insight generator. Deferred by design: vendor inspectors (VAPIX, ISAPI, BusyBox), RLS, live packet
 capture, default-credential probing, and any form of exploitation (never).

@@ -461,3 +461,126 @@ class InspectionResult(BaseModel):
     anchors: list[AnchorObservation] = Field(default_factory=list)
     started_at: datetime  # UTC
     finished_at: datetime  # UTC
+
+
+# ---------------------------------------------------------------------------
+# m2-design §2 — ManagedSource operation types
+# ---------------------------------------------------------------------------
+
+
+class ManagedSourceKind(StrEnum):
+    """Where an authoritative record came from.
+
+    The values match the `managed_record.source` CHECK constraint in migration
+    `0001_expand`: adding one means a migration, which is the right amount of friction for
+    a column the shadow-IT diff is computed from.
+    """
+
+    AD = "ad"
+    MDM = "mdm"
+    EDR = "edr"
+    VCENTER = "vcenter"
+    CMDB = "cmdb"
+
+
+class ManagedRecordInput(BaseModel):
+    """One row of an authoritative inventory, normalized.
+
+    This is the other half of the shadow-IT diff: `observation` says what is on the
+    network, `managed_record` says what the organization believes it owns, and the
+    interesting part is where they disagree (m2-design §1).
+
+    The identity fields are the anchors the reconciliation in P11 will match on, in the
+    same priority the entity resolution already uses (`serial › mac › hostname`). They are
+    optional individually because real CMDB rows are patchy — but a row with none of them
+    is unusable, and the adapter refuses it rather than storing a record nothing can ever
+    be matched to.
+
+    `attributes` carries the other mapped columns as free text. Nothing secret-bearing
+    belongs here: a CMDB export should not contain credentials, and if one does, it is not
+    this model's job to be the place they land (AGENTS.md §2.10).
+    """
+
+    tenant_id: UUID
+    source: ManagedSourceKind
+    external_id: str  # the authoritative system's own record id
+    hostname: str | None = None
+    serial: str | None = None
+    mac: str | None = None
+    ip: str | None = None
+    owner: str | None = None
+    attributes: dict[str, str] = Field(default_factory=dict)
+    #: Which export this came from — a filename, an API endpoint, an import id. Provenance
+    #: for a record whose truth is entirely a matter of who said so (AGENTS.md §2.2).
+    source_ref: str
+    observed_at: datetime  # UTC — when the export was taken, not when we read it
+
+    @property
+    def has_identity(self) -> bool:
+        """Is there anything here the diff could ever match on?"""
+        return any((self.serial, self.mac, self.hostname, self.ip))
+
+
+class SkipReason(StrEnum):
+    """Why a row of an authoritative export did not become a record.
+
+    An enum rather than free text because these get counted and compared across imports:
+    "your export has 340 rows with no serial" is a conversation with the CMDB owner, and it
+    only happens if the reasons aggregate.
+    """
+
+    BLANK = "blank"  # nothing in the row at all
+    NO_EXTERNAL_ID = "no_external_id"  # nothing to key idempotency on
+    NO_IDENTITY = "no_identity"  # no serial, MAC, hostname or IP — unmatchable
+    DUPLICATE_EXTERNAL_ID = "duplicate_external_id"  # the same id twice in one file
+    OVERSIZED = "oversized"  # a cell far past any plausible field length
+    MALFORMED = "malformed"  # the row did not parse
+
+
+class SkippedRow(BaseModel):
+    """A refused row: where it was and why. Never the row's content — it is untrusted text
+    and a diagnostic is not the place for it (AGENTS.md §2.9)."""
+
+    row_number: int
+    reason: SkipReason
+    column: str | None = None
+
+
+class SourceReadReport(BaseModel):
+    """What a read of an authoritative source did, including everything it refused.
+
+    Every row is accounted for: `rows_read == records_yielded + len(skipped)`. That
+    invariant is the point — an import that quietly loses rows would corrupt the shadow-IT
+    diff in the most dangerous direction, by making a managed device look unmanaged.
+    """
+
+    source_ref: str
+    rows_read: int = 0
+    records_yielded: int = 0
+    skipped: list[SkippedRow] = Field(default_factory=list)
+    #: Cells that looked like spreadsheet formulas and were neutralised (ADR-0008).
+    defanged_cells: int = 0
+
+    @property
+    def skipped_count(self) -> int:
+        return len(self.skipped)
+
+    @property
+    def reasons(self) -> dict[str, int]:
+        """Skip counts by reason — the summary an operator acts on."""
+        counts: dict[str, int] = {}
+        for row in self.skipped:
+            counts[row.reason.value] = counts.get(row.reason.value, 0) + 1
+        return counts
+
+    @property
+    def balanced(self) -> bool:
+        """Every row read is either a record or an accounted-for skip."""
+        return self.rows_read == self.records_yielded + self.skipped_count
+
+
+class ManagedRecordResult(BaseModel):
+    """The outcome of writing one authoritative record."""
+
+    record_id: UUID
+    created: bool  # False ⇒ the record was already known and has been refreshed
