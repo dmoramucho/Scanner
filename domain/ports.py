@@ -21,6 +21,7 @@ from domain.models import (
     AssetAnchorSet,
     AssetResolution,
     AssetView,
+    ComponentSnapshot,
     CveQueryCacheEntry,
     CveRecord,
     DeviceFingerprint,
@@ -44,6 +45,8 @@ from domain.models import (
     SoftwareComponent,
     SourceReadReport,
     TriageDossier,
+    VulnerabilityMatchInput,
+    VulnerabilityMatchRecord,
 )
 from domain.secret import Secret
 
@@ -396,6 +399,32 @@ class EpssCache(Protocol):
 
     def replace(self, source: str, scores: Sequence[EpssScore], snapshot: FeedSnapshot) -> int:
         """Swap the whole snapshot for this one, atomically. Returns how many scores landed."""
+        ...
+
+
+class VulnerabilityMatchStore(Protocol):
+    """Both ends of correlation: the components to check, and the matches it concludes.
+
+    Reads return components reduced to what correlation needs — what the software is, and
+    how well we know its version. Writes are idempotent through the store's own unique key,
+    never a check-then-insert (AGENTS.md §62), because a re-correlation is routine: feeds
+    change, components change, and a run must be safe to repeat.
+    """
+
+    def components_with_cpe(self, tenant_id: UUID) -> Sequence[ComponentSnapshot]:
+        """Every current component that has a CPE to look up.
+
+        Components without a CPE are not returned: there is nothing to correlate them
+        against, and inventing one would be guessing at identity (m3-design §2).
+        """
+        ...
+
+    def record_match(self, match: VulnerabilityMatchInput) -> VulnerabilityMatchRecord:
+        """Insert or refresh one match. `created=False` means it was already known.
+
+        Refresh rather than duplicate: a CVE's KEV status and EPSS score change, and the
+        latest correlation is the current statement of what we believe.
+        """
         ...
 
 

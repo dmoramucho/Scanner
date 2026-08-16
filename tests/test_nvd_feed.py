@@ -136,7 +136,7 @@ def test_a_cpe_with_cves_normalizes_into_records() -> None:
     assert first.cvss_version == "3.1"
     assert "widget handler" in first.description  # the English one, not the Spanish
     assert first.published_at == datetime(2024, 1, 15, 10, 15, 7, tzinfo=UTC)
-    assert APACHE in first.cpe_criteria
+    assert APACHE in {match.criteria for match in first.cpe_matches}
 
 
 def test_records_carry_provenance_and_a_reference_to_the_raw_response() -> None:
@@ -196,7 +196,7 @@ def test_a_record_with_renamed_or_wrongly_typed_fields_still_yields_what_it_can(
     salvaged = next(record for record in records if record.cve_id == "CVE-2024-99999")
     assert salvaged.description == ""
     assert salvaged.cvss_score is None
-    assert salvaged.cpe_criteria == []
+    assert salvaged.cpe_matches == []
     assert salvaged.published_at is None
 
 

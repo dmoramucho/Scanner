@@ -84,7 +84,7 @@ secret is actually used.
 
 ## Status
 
-**M0, M1 and M2 complete (P1–P11); M3 in progress (P12–P13).** A capture goes end to end: parsers turn an ARP
+**M0, M1 and M2 complete (P1–P11); M3 Half A complete (P12–P14).** A capture goes end to end: parsers turn an ARP
 table, DHCP leases, or mDNS output into provenance-complete observations; the engine calls
 `require_authorized` on every target *before* anything is recorded; the sink writes them
 idempotently into the append-only spine; entity resolution collapses them into assets by stable
@@ -130,6 +130,15 @@ What the system guarantees, each proven by tests:
   finding and is cached as one; NVD timing out, rate-limiting, or returning a proxy error page
   raises instead. Collapsing the two would make a component read as clean when nobody had
   checked it — a false negative the system would have created (ADR-0010).
+- **A CVE never matches a version it does not affect.** NVD's ranges are re-checked locally
+  against each component's version, with exact boundary semantics (`versionStartIncluding` is
+  closed, `versionEndExcluding` is open) and numeric ordering — a lexical compare would put
+  2.4.6 after 2.4.57. A comparison that cannot be decided keeps the finding but never calls it
+  confirmed (ADR-0012).
+- **`confidence_state` is derived, never guessed.** `package_manager` or `vendor_api` →
+  `confirmed`; `banner` → `probable`, because a distribution that backported the fix serves the
+  old version string forever. `verified_exploitable` is never produced by correlation — it
+  belongs to a later `check` step that actually demonstrates exploitability.
 - **A KEV lookup never quietly says "not exploited".** `False` means CISA published a catalog we
   hold and this CVE is not in it; a catalog we could not fetch raises. The same rule as above,
   applied where it costs the most — silently de-prioritising an actively-exploited vulnerability
@@ -190,8 +199,14 @@ advisory AI insight *on top of* matches Half A already made, and only after Half
 The separation is a safety barrier, not organisation: it is what makes it structurally impossible
 for a model to decide that a vulnerability exists.
 
-P12 and P13 delivered the three feeds — NVD for the match, CISA KEV for the exploitation
-override, EPSS for the probability gradient — fetching and caching only, no correlation yet.
-Next: P14 (deterministic correlation into `vulnerability_match`, confidence-stratified by
-`version_source`: `package_manager` → confirmed, `banner` → probable), then Half B. Deferred by design: vendor inspectors (VAPIX, ISAPI, BusyBox), RLS, live packet
+**Half A is done.** The store now answers *what is vulnerable, how confident we are in the
+version, whether it is actively exploited, and how likely exploitation is* — entirely
+deterministically, with no model having run. That was the precondition: m3-design §1 makes the
+split a safety barrier rather than an ordering preference, because code where an LLM might
+"decide" whether a vulnerability exists is exactly where it would inject a false negative into a
+security system.
+
+Next is Half B: the `AdvisoryRetriever` and `InsightGenerator` ports, grounded and cited AI
+insight *on top of* matches Half A already made — propose/dispose, KEV-sticky, ungrounded
+insights rejected before persistence. Deferred by design: vendor inspectors (VAPIX, ISAPI, BusyBox), RLS, live packet
 capture, default-credential probing, and any form of exploitation (never).

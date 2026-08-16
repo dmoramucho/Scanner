@@ -751,6 +751,38 @@ class CvssSeverity(StrEnum):
     CRITICAL = "critical"
 
 
+class CpeMatch(BaseModel):
+    """One CPE criterion a CVE applies to, with the version range that qualifies it.
+
+    NVD usually publishes the criterion with a wildcard version and puts the real bounds in
+    sibling fields: `cpe:2.3:a:apache:http_server:*:…` plus `versionStartIncluding: 2.4.0`
+    and `versionEndExcluding: 2.4.58`. Dropping those bounds — keeping only the criterion
+    string — would make every version of the product look affected, which is the spurious
+    match m3-design §2 warns poisons everything downstream.
+
+    All four bounds are optional and they combine: absent bounds on a wildcard criterion
+    mean *every* version of that product is affected, which NVD does publish and does mean.
+    """
+
+    criteria: str
+    vulnerable: bool = True
+    version_start_including: str | None = None
+    version_start_excluding: str | None = None
+    version_end_including: str | None = None
+    version_end_excluding: str | None = None
+
+    @property
+    def has_bounds(self) -> bool:
+        return any(
+            (
+                self.version_start_including,
+                self.version_start_excluding,
+                self.version_end_including,
+                self.version_end_excluding,
+            )
+        )
+
+
 class CveRecord(BaseModel):
     """One CVE, normalized away from whatever shape the feed returned it in.
 
@@ -777,9 +809,10 @@ class CveRecord(BaseModel):
     cvss_vector: str | None = None
     cvss_version: str | None = None
     severity: CvssSeverity | None = None
-    #: The CPE criteria NVD says this CVE applies to. Kept as strings: matching them
-    #: against our components is P14's job, and it is deterministic.
-    cpe_criteria: list[str] = Field(default_factory=list)
+    #: The CPE criteria NVD says this CVE applies to, each with its version bounds.
+    #: Matching them against our components is the correlator's job, and it is
+    #: deterministic — which is only possible if the bounds travel with the criteria.
+    cpe_matches: list[CpeMatch] = Field(default_factory=list)
     references: list[str] = Field(default_factory=list)
     fetched_at: datetime  # UTC — when we asked the feed
     raw_record_ref: str | None = None  # pointer to the response this came from
@@ -894,3 +927,66 @@ class FeedSnapshot(BaseModel):
     fetched_at: datetime  # UTC
     record_count: int = 0
     raw_record_ref: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# m3-design §2 — deterministic correlation (Half A; no model, ever)
+# ---------------------------------------------------------------------------
+
+
+class ConfidenceState(StrEnum):
+    """How much the version behind a vulnerability match is worth.
+
+    The distinction the whole stratification exists for (dossier contract, AGENTS.md §3):
+    a package database says what is *installed*; a banner says what a service *claims*, and
+    a distribution that backported the fix serves the old version string forever. Reporting
+    both as equally certain is how a scanner earns a reputation for crying wolf.
+
+    `VERIFIED_EXPLOITABLE` is defined here because the schema has it, and is deliberately
+    never produced by correlation: it belongs to a later `check`-module step that actually
+    demonstrates exploitability (m3-design §2, §5).
+    """
+
+    CONFIRMED = "confirmed"  # the device's own package database said so
+    PROBABLE = "probable"  # inferred from a banner — may already be patched
+    VERIFIED_EXPLOITABLE = "verified_exploitable"  # reserved; never set here
+
+
+class ComponentSnapshot(BaseModel):
+    """A component reduced to what correlation needs: what it is, and how well we know it."""
+
+    component_id: UUID
+    asset_id: UUID
+    tenant_id: UUID
+    cpe: str
+    name: str
+    version: str | None = None
+    version_source: VersionSource
+
+
+class VulnerabilityMatchInput(BaseModel):
+    """One deterministic match, ready for the store.
+
+    `derivation` is a `Literal` rather than a field anyone may set: the database CHECK
+    already refuses anything else, and this makes the same statement in the type system.
+    No model decides that a vulnerability exists (AGENTS.md §2.8, §4.8).
+    """
+
+    tenant_id: UUID
+    asset_id: UUID
+    component_id: UUID | None
+    cve_id: str
+    matched_cpe: str  # the CVE's criterion that matched, not our component's CPE
+    version_source: VersionSource
+    confidence_state: ConfidenceState
+    kev: bool = False
+    epss: Annotated[float, Field(ge=0.0, le=1.0)] | None = None
+    derivation: Literal["deterministic"] = "deterministic"
+    run_id: UUID | None = None
+
+
+class VulnerabilityMatchRecord(BaseModel):
+    """The outcome of writing one match."""
+
+    match_id: UUID
+    created: bool  # False ⇒ the match was already known and has been refreshed

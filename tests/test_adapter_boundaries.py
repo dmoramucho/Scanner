@@ -35,6 +35,13 @@ COLLECTOR_MODULES = sorted(COLLECTOR_ROOT.rglob("*.py"))
 SCANNER_MODULES = sorted(SCANNER_ROOT.rglob("*.py"))
 FEED_MODULES = sorted(FEED_ROOT.rglob("*.py"))
 
+#: Half A's deterministic core: the correlator and the version arithmetic under it. The
+#: safety assertion m3-design §4 asks for covers the whole path, not only the feed.
+CORRELATION_MODULES = [
+    REPO_ROOT / "engine" / "correlation.py",
+    REPO_ROOT / "engine" / "cpe.py",
+]
+
 #: Half A of M3 is deterministic by construction (m3-design §1). A model's CVE knowledge is
 #: stale and hallucinated CVE ids are its most characteristic failure (AGENTS.md §4.8), so
 #: the feed must never acquire one — not even "just to summarise a description".
@@ -143,3 +150,23 @@ def test_the_vulnerability_feed_stays_out_of_the_store(module_path: Path) -> Non
 
     assert "psycopg" not in imported
     assert "adapters.postgres" not in module_path.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("module_path", CORRELATION_MODULES, ids=lambda p: p.name)
+def test_the_correlator_imports_no_model(module_path: Path) -> None:
+    """No code path in Half A produces a match from anything but the deterministic feed
+    (m3-design §1, §4). A model here could decide that a vulnerability exists, which is the
+    one thing this architecture is built to make impossible (AGENTS.md §2.8, §4.8)."""
+    imported = {root for root, _ in imported_roots(module_path)}
+
+    assert imported & MODEL_PACKAGES == set()
+
+
+@pytest.mark.parametrize("module_path", CORRELATION_MODULES, ids=lambda p: p.name)
+def test_the_correlator_depends_on_ports_not_adapters(module_path: Path) -> None:
+    """The engine names no adapter: it takes `VulnerabilityFeed`, `KevSource`, `EpssSource`
+    and `VulnerabilityMatchStore`, and would work the same over a different feed."""
+    source = module_path.read_text(encoding="utf-8")
+
+    assert "adapters" not in source
+    assert "psycopg" not in source

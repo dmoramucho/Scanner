@@ -38,6 +38,7 @@ from typing import Final
 from adapters.feed.http import MAX_RESPONSE_BYTES, HttpClient, HttpResponse, HttpxClient
 from domain.errors import DependencyError, ValidationError
 from domain.models import (
+    CpeMatch,
     CveQueryCacheEntry,
     CveRecord,
     CvssSeverity,
@@ -301,7 +302,7 @@ class NvdVulnerabilityFeed:
                 cvss_vector=vector,
                 cvss_version=version,
                 severity=severity,
-                cpe_criteria=_cpe_criteria(cve.get("configurations")),
+                cpe_matches=_cpe_matches(cve.get("configurations")),
                 references=_references(cve.get("references")),
                 fetched_at=fetched_at,
                 # The normalized record always points back at what the feed actually said
@@ -402,36 +403,68 @@ def _cvss(metrics: object) -> tuple[float | None, str | None, str | None, CvssSe
     return None, None, None, None
 
 
-def _cpe_criteria(configurations: object) -> list[str]:
-    """Every CPE string this CVE says it applies to.
+def _cpe_matches(configurations: object) -> list[CpeMatch]:
+    """Every CPE criterion this CVE applies to, **with its version bounds**.
 
-    Walked defensively rather than trusted: `configurations` is the most deeply nested part
-    of NVD's schema and the part most likely to be shaped differently than expected.
+    The bounds are the whole point. NVD publishes most criteria with a wildcard version and
+    the real range in sibling fields; reading only the criterion string would make every
+    version of the product look affected. Walked defensively rather than trusted:
+    `configurations` is the most deeply nested part of NVD's schema and the part most likely
+    to be shaped differently than expected (AGENTS.md §2.9).
     """
-    criteria: list[str] = []
+    matches: list[CpeMatch] = []
     if not isinstance(configurations, list):
-        return criteria
+        return matches
 
+    seen: set[tuple[str, str, str, str, str]] = set()
     for configuration in configurations:
         if not isinstance(configuration, dict):
             continue
-        for node in (
-            configuration.get("nodes", []) if isinstance(configuration.get("nodes"), list) else []
-        ):
+        nodes = configuration.get("nodes")
+        for node in nodes if isinstance(nodes, list) else []:
             if not isinstance(node, dict):
                 continue
-            matches = node.get("cpeMatch")
-            if not isinstance(matches, list):
+            entries = node.get("cpeMatch")
+            if not isinstance(entries, list):
                 continue
-            for match in matches:
-                if not isinstance(match, dict):
+            for entry in entries:
+                match = _cpe_match(entry)
+                if match is None:
                     continue
-                value = _clean(match.get("criteria"), 500)
-                if value and value.startswith("cpe:") and value not in criteria:
-                    criteria.append(value)
-                if len(criteria) >= MAX_CPE_CRITERIA:
-                    return criteria
-    return criteria
+                key = (
+                    match.criteria,
+                    match.version_start_including or "",
+                    match.version_start_excluding or "",
+                    match.version_end_including or "",
+                    match.version_end_excluding or "",
+                )
+                if key in seen:
+                    continue
+                seen.add(key)
+                matches.append(match)
+                if len(matches) >= MAX_CPE_CRITERIA:
+                    return matches
+    return matches
+
+
+def _cpe_match(entry: object) -> CpeMatch | None:
+    if not isinstance(entry, dict):
+        return None
+    criteria = _clean(entry.get("criteria"), 500)
+    if not criteria or not criteria.startswith("cpe:"):
+        return None
+
+    vulnerable = entry.get("vulnerable")
+    return CpeMatch(
+        criteria=criteria,
+        # NVD marks some criteria as the *platform* a vulnerable component runs on rather
+        # than the vulnerable thing itself. Only an explicit `false` excludes it.
+        vulnerable=vulnerable is not False,
+        version_start_including=_clean(entry.get("versionStartIncluding"), 100),
+        version_start_excluding=_clean(entry.get("versionStartExcluding"), 100),
+        version_end_including=_clean(entry.get("versionEndIncluding"), 100),
+        version_end_excluding=_clean(entry.get("versionEndExcluding"), 100),
+    )
 
 
 def _references(references: object) -> list[str]:

@@ -19,7 +19,7 @@ import pytest
 from adapters.feed.http import HttpResponse
 from adapters.feed.nvd import NvdVulnerabilityFeed
 from adapters.postgres.cve_cache import PostgresCveCache
-from domain.models import CveQueryCacheEntry, CveRecord, CvssSeverity
+from domain.models import CpeMatch, CveQueryCacheEntry, CveRecord, CvssSeverity
 
 pytestmark = pytest.mark.integration
 
@@ -70,7 +70,7 @@ def record(cve_id: str, *, score: float = 7.5, fetched_at: datetime = NOW) -> Cv
         cvss_vector="CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
         cvss_version="3.1",
         severity=CvssSeverity.HIGH,
-        cpe_criteria=[APACHE],
+        cpe_matches=[CpeMatch(criteria=APACHE)],
         references=["https://example.invalid/advisory"],
         fetched_at=fetched_at,
         raw_record_ref=f"nvd:{cve_id}",
@@ -93,7 +93,7 @@ def test_a_record_round_trips_through_the_cache(conn: Connection) -> None:
     assert restored.cve_id == "CVE-2024-27316"
     assert restored.cvss_score == 7.5
     assert restored.severity is CvssSeverity.HIGH
-    assert restored.cpe_criteria == [APACHE]
+    assert [m.criteria for m in restored.cpe_matches] == [APACHE]
     assert restored.raw_record_ref == "nvd:CVE-2024-27316"
     assert restored.fetched_at == NOW
 
