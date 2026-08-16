@@ -139,6 +139,9 @@ You cannot tell whether a scan hurt something if you do not know what healthy lo
 minutes earlier. Capture all of these and keep them on screen:
 
 - [ ] **Ping response and latency.** `ping -c 20 <TARGET_IP>` — record loss and average RTT.
+- [ ] **Which TCP port is open**, and note it: the breaker's probe connects to one port you
+      name (step 4), so you need to know one. The camera's 80 or 554, the printer's 9100, the
+      phone's 80 — whatever step 1's passive data or the device's own admin UI tells you.
 - [ ] **Its actual job, working.** Pull up the camera's video stream; make a test call on the
       phone; print a test page. *"It answers pings" is not "it works."* Most embedded failures
       under scan look like a live ping and a dead application.
@@ -171,6 +174,7 @@ import psycopg
 from adapters.postgres.asset_repository import PostgresAssetRepository
 from adapters.postgres.observation_sink import PostgresObservationSink
 from adapters.postgres.scope_authority import PostgresScopeAuthority
+from adapters.probe.tcp import TcpHealthProbe
 from adapters.scanner.nmap import NmapActiveScanner
 from config import load_config
 from engine.active_scan import ActiveScanEngine, BreakerPolicy, ScanCandidate, classify
@@ -184,6 +188,16 @@ candidate = ScanCandidate(
     open_ports=(),                       # leave empty; let the vendor decide the profile
 )
 
+# The breaker's health check: one TCP connect to a port you know is open on this device
+# (its admin UI, its RTSP stream — whatever answered in step 3), then close. No data is
+# sent. If you have no known-open port, the probe refuses to guess and the device is not
+# scanned (ADR-0007) — find the port first, or do not scan it yet.
+probe = TcpHealthProbe({str(TARGET): <KNOWN_OPEN_PORT>}, timeout_seconds=2.0)
+
+# Confirm the probe agrees the device is alive BEFORE the scan. This is the same call the
+# breaker makes, so a False here means the breaker would refuse to scan anyway.
+print("responsive before scan:", probe.is_responsive(TARGET))
+
 # Confirm the profile BEFORE any packet. If this does not print GENTLE, stop and fix the
 # classification rather than proceeding.
 print("profile:", classify(candidate))
@@ -193,7 +207,7 @@ with psycopg.connect(load_config().database_url.reveal(), autocommit=True) as co
     engine = ActiveScanEngine(
         PostgresScopeAuthority(conn, actor="operator", correlation_id="gentle-validation"),
         NmapActiveScanner(run_id),
-        <YOUR HEALTH PROBE>,             # see "Known gaps" — no adapter ships yet
+        probe,
         PostgresObservationSink(conn),
         PostgresAssetRepository(conn),
         run_id=run_id,
@@ -354,10 +368,15 @@ that class — and even then, in small batches with the breaker on.
 Stated plainly rather than left for you to discover mid-validation:
 
 - **No CLI.** Step 4 is a script because no operator entry point exists yet. It needs one.
-- **No health-probe adapter ships.** `HealthProbe` is a port with no implementation, so the
-  script above has a placeholder. Until one exists, your health check is the manual `ping` window
-  from step 3 — which is why step 3 is not optional, and why `BreakerPolicy` in the script is
-  configured but effectively blind. **This is the most significant gap in the procedure.**
+- **The probe needs a port you supply.** `TcpHealthProbe` connects to a port discovery already
+  found open; it will not scan to find one, and it raises rather than assuming health if it has
+  none (ADR-0007). For a device whose ports you do not yet know, that means the breaker refuses
+  and the device is not scanned — deliberately, but it is friction worth knowing about before
+  you are standing in front of the rack.
+- **A TCP probe cannot see an application dying.** A device whose kernel still answers a SYN
+  while its video stream is dead reads as "responsive". That is why step 3 and step 5 ask you to
+  check the device's *actual job*, not just its liveness — the human check is still the better
+  instrument, and the probe complements it rather than replacing it.
 - **`GENTLE` is untested against real hardware.** That is the entire point of this document; the
   first person to run it is doing the validation, not confirming it.
 - **Credentialed inspection has its own unrun validation.** The SSH inspector (P7) needs the same

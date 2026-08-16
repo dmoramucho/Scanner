@@ -23,6 +23,7 @@ unmanaged-device (shadow-IT) diff, confidence-based noise reduction, and grounde
 | `adapters/collector/` | Passive discovery (ARP / DHCP / mDNS). Read-only and store-free by construction |
 | `adapters/scanner/` | Active scanning: the nmap orchestrator. The only place that knows what a scanner flag is |
 | `adapters/inspector/` | Credentialed reads over SSH — read-only, allow-listed commands, credential-safe |
+| `adapters/probe/` | The circuit breaker's health check: one TCP connect, no data, no root |
 | `engine/` | Orchestration; the scope gate runs before anything is recorded, and the scan-safety policy lives here |
 | `config/` | Startup configuration — validated once, fail-fast |
 | `migrations/` | Alembic revisions — hand-written raw SQL, no ORM ([how](migrations/README.md)) |
@@ -112,7 +113,9 @@ What the system guarantees, each proven by tests:
 - **A device that stops answering stops being scanned.** Health checks bracket every scan; a
   device that was up before and silent after trips the circuit breaker, which backs off, records
   the trip as an observation rather than a counter, and moves on. One casualty never aborts the
-  run — three in a row does (ADR-0004).
+  run — three in a row does (ADR-0004). The check itself is the lightest touch in the system: a
+  single TCP connect to a port discovery already found open, no data sent, no root, and it raises
+  rather than assuming health when it has no port to check (ADR-0007).
 - **Nothing goes near a shell.** The nmap invocation is an argument list, and the target is
   validated as a real IP address before any command exists. nmap's XML is parsed as untrusted
   input, with external entities and entity expansion refused (ADR-0003).
@@ -139,9 +142,8 @@ What the system guarantees, each proven by tests:
 [`docs/runbooks/validate-gentle-scan.md`](docs/runbooks/validate-gentle-scan.md) is the procedure
 for pointing a `GENTLE` scan at one real device, under real authorisation, and confirming it
 survives. Until someone runs it, "we do not break embedded devices" is a well-tested design
-intention rather than an observed fact. The runbook also names the gaps it runs into: there is no
-CLI yet, and no `HealthProbe` adapter, so the circuit breaker has no live sense organ outside
-tests.
+intention rather than an observed fact. The runbook also names the gaps it runs into — chiefly that there is
+still no CLI, so the procedure runs from a short script.
 
 Next (M2/M3): CPE→CVE correlation with NVD/KEV/EPSS, the triage dossier, and the grounded insight
 generator. Deferred by design: vendor inspectors (VAPIX, ISAPI, BusyBox), RLS, live packet
