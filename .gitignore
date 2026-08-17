@@ -27,3 +27,9 @@ data/local/
 .DS_Store
 .idea/
 .vscode/
+
+# Frontend build artefacts (the app's own .gitignore covers the same ground; this is the
+# belt to its braces, so a stray `npm install` at the repo root cannot be committed).
+node_modules/
+dist/
+coverage/

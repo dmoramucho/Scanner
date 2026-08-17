@@ -1,0 +1,204 @@
+/*
+ * The visual language, defined once.
+ *
+ * Every colour, size and weight the component system uses is a custom property declared
+ * here. No component carries a hex value — `src/theme/tokens.test.ts` fails the build if one
+ * appears — because the three distinctions are only legible if they look the same on every
+ * screen, and "the same" is a thing you can only guarantee from one place (ux-design §2).
+ *
+ * Two layers, on purpose:
+ *
+ *   1. **Primitives** (`--slate-600`, `--amber-500`): the raw palette. Nothing outside this
+ *      file may use them.
+ *   2. **Semantics** (`--signal-kev-fg`, `--ai-surface`): what a thing *means*. Components
+ *      use only these, so re-theming — or adding a dark scheme — is an edit to this file and
+ *      nothing else.
+ *
+ * The palette is deliberately quiet. The anti-pattern named in ux-design §2 is the alert
+ * firehose: if everything is red, nothing is urgent. So the base is near-monochrome, colour
+ * carries meaning rather than decoration, and exactly one signal — KEV — is allowed to shout.
+ */
+
+:root {
+  /* ---------------------------------------------------------------- primitives */
+  --slate-50: #f8fafc;
+  --slate-100: #f1f5f9;
+  --slate-200: #e2e8f0;
+  --slate-300: #cbd5e1;
+  --slate-400: #94a3b8;
+  --slate-500: #64748b;
+  --slate-600: #475569;
+  --slate-700: #334155;
+  --slate-800: #1e293b;
+  --slate-900: #0f172a;
+
+  --red-50: #fef2f2;
+  --red-200: #fecaca;
+  --red-600: #dc2626;
+  --red-700: #b91c1c;
+
+  --amber-50: #fffbeb;
+  --amber-200: #fde68a;
+  --amber-700: #b45309;
+
+  --emerald-50: #ecfdf5;
+  --emerald-200: #a7f3d0;
+  --emerald-700: #047857;
+
+  --violet-50: #f5f3ff;
+  --violet-200: #ddd6fe;
+  --violet-300: #c4b5fd;
+  --violet-600: #7c3aed;
+  --violet-700: #6d28d9;
+
+  --blue-50: #eff6ff;
+  --blue-200: #bfdbfe;
+  --blue-700: #1d4ed8;
+
+  /* ------------------------------------------------------------------ surfaces */
+  --surface: #ffffff;
+  --surface-sunken: var(--slate-50);
+  --surface-raised: #ffffff;
+  --border: var(--slate-200);
+  --border-strong: var(--slate-300);
+
+  --text-primary: var(--slate-900);
+  --text-secondary: var(--slate-600);
+  --text-muted: var(--slate-500);
+  --text-inverse: #ffffff;
+
+  /* -------------------------------------------------- distinction 1: confidence
+   * Confirmed is the one an analyst can act on without logging in, so it reads as
+   * settled. Probable is deliberately *not* alarming — it is a work queue, and
+   * dressing it in red would put a maybe-backport beside a real finding
+   * (ux-design §2). Verified-exploitable outranks both and is reserved.
+   */
+  --confidence-confirmed-fg: var(--slate-800);
+  --confidence-confirmed-bg: var(--slate-100);
+  --confidence-confirmed-border: var(--slate-300);
+
+  --confidence-probable-fg: var(--amber-700);
+  --confidence-probable-bg: var(--amber-50);
+  --confidence-probable-border: var(--amber-200);
+
+  --confidence-verified-fg: var(--red-700);
+  --confidence-verified-bg: var(--red-50);
+  --confidence-verified-border: var(--red-200);
+
+  /* --------------------------------------------- distinction 2: management state
+   * Shadow IT is the headline number of the whole product, so it is the only one of
+   * the three with real colour. Unknown is grey on purpose: an ambiguous match must
+   * never look like a finding (ADR-0009).
+   */
+  --management-managed-fg: var(--emerald-700);
+  --management-managed-bg: var(--emerald-50);
+  --management-managed-border: var(--emerald-200);
+
+  --management-shadow-fg: var(--red-700);
+  --management-shadow-bg: var(--red-50);
+  --management-shadow-border: var(--red-200);
+
+  --management-unknown-fg: var(--slate-600);
+  --management-unknown-bg: var(--slate-100);
+  --management-unknown-border: var(--slate-300);
+
+  /* ------------------------------------------------ distinction 3: fact vs AI
+   * One hue, used for nothing else in the system, so "this came from a model" is
+   * recognisable at a glance and never confusable with severity (ux-design §2).
+   */
+  --ai-fg: var(--violet-700);
+  --ai-bg: var(--violet-50);
+  --ai-border: var(--violet-200);
+  --ai-rule: var(--violet-600);
+  --ai-surface: var(--violet-50);
+
+  --fact-surface: var(--surface);
+  --fact-border: var(--border);
+
+  /* ------------------------------------------------------- the recurring signals */
+  /* KEV is the only thing allowed to shout. Solid fill, not a tint. */
+  --signal-kev-fg: var(--text-inverse);
+  --signal-kev-bg: var(--red-600);
+  --signal-kev-border: var(--red-700);
+
+  --priority-p1-fg: var(--red-700);
+  --priority-p1-bg: var(--red-50);
+  --priority-p1-border: var(--red-200);
+  --priority-p2-fg: var(--amber-700);
+  --priority-p2-bg: var(--amber-50);
+  --priority-p2-border: var(--amber-200);
+  --priority-p3-fg: var(--slate-700);
+  --priority-p3-bg: var(--slate-100);
+  --priority-p3-border: var(--slate-300);
+  --priority-p4-fg: var(--slate-500);
+  --priority-p4-bg: var(--slate-50);
+  --priority-p4-border: var(--slate-200);
+
+  /* Credentialed reads are ground truth; a banner is a claim. */
+  --source-ground-truth-fg: var(--slate-800);
+  --source-ground-truth-bg: var(--slate-100);
+  --source-ground-truth-border: var(--slate-300);
+  --source-inferred-fg: var(--amber-700);
+  --source-inferred-bg: var(--amber-50);
+  --source-inferred-border: var(--amber-200);
+
+  /* Anything derived rather than measured — the VLAN label, today. */
+  --inferred-fg: var(--blue-700);
+  --inferred-bg: var(--blue-50);
+  --inferred-border: var(--blue-200);
+
+  /* ---------------------------------------------------------------- typography
+   * Dense and desktop-first: the surfaces are tables of hundreds of rows, and the
+   * moat only shows at volume (ux-design §5).
+   */
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+
+  --text-xs: 0.6875rem;
+  --text-sm: 0.8125rem;
+  --text-base: 0.875rem;
+  --text-lg: 1rem;
+  --text-xl: 1.25rem;
+  --text-2xl: 1.5rem;
+
+  --weight-normal: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+
+  --leading-tight: 1.25;
+  --leading-normal: 1.5;
+
+  /* -------------------------------------------------------------------- spacing */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+
+  --radius-sm: 3px;
+  --radius-md: 5px;
+  --radius-lg: 8px;
+
+  --border-width: 1px;
+  --rule-width: 3px;
+
+  --shadow-sm: 0 1px 2px rgb(15 23 42 / 6%);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--surface-sunken);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: var(--leading-normal);
+  -webkit-font-smoothing: antialiased;
+}

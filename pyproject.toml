@@ -92,6 +92,9 @@ ban-relative-imports = "all"
 # The error names are the published contract (ports.md §1); N818's "-Error" suffix
 # convention does not get to rename `ScopeViolation`.
 "domain/errors.py" = ["N818"]
+# A command-line tool reports to a terminal. `print` is its output, not a stray debug
+# statement — and routing an operator-facing summary through the logger would bury it.
+"tools/demo/seed.py" = ["T201"]
 
 [tool.ruff.format]
 docstring-code-format = true
@@ -102,7 +105,7 @@ docstring-code-format = true
 [tool.mypy]
 python_version = "3.12"
 strict = true
-files = ["domain", "adapters", "engine", "config", "migrations", "tests"]
+files = ["api", "domain", "adapters", "engine", "config", "migrations", "tests", "tools"]
 plugins = ["pydantic.mypy"]
 warn_unreachable = true
 enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool"]

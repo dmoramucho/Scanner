@@ -7,7 +7,10 @@ remembered in each of N places is a rule that survives N−1 refactors.
 
 **Run it on loopback.** Authentication is deferred (m4-design §5), so this API has none:
 
-    uvicorn api.app:app --host 127.0.0.1 --port 8000
+    uvicorn api.main:app --host 127.0.0.1 --port 8000
+
+This module has no module-level `app` on purpose — `api.main` is the only entrypoint,
+because importing it is what loads and validates configuration (see that module's docstring).
 
 The app refuses non-loopback callers by default regardless of what it is bound to, so a
 mistake in a deployment command is not a disclosure. `SCANNER_API_ALLOW_REMOTE=1` turns that

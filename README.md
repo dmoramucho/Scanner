@@ -53,13 +53,49 @@ set -a; . ./.env; set +a    # alembic reads the DSN through config.load_config()
 uv run alembic upgrade head # apply the store schema
 ```
 
-Serving the read API (M4, P18):
+A demo estate to look at (M4, P20.5) — optional, and **dev-only**:
+
+```bash
+uv run python -m tools.demo.seed
+```
+
+This grows a small estate by *running the pipeline*, not by inserting rows: the scope gate
+authorizes each target (and refuses the one out-of-scope address, audibly), entity resolution
+joins the ARP sighting to the DHCP lease on the MAC they share, the correlator derives every
+finding and priority band, and the triage pipeline assembles and redacts each dossier before
+attaching a proposal. NVD, KEV, EPSS and the model are the only things replaced, by offline
+stand-ins — every judgment about their output is made by code that ships, so the KEV floor and
+the grounding check do real work. Provenance in the demo data is real provenance, and every
+fabricated record is labelled `demo-fixture` so nobody mistakes it for an estate.
+
+`tools/demo/guard.py` refuses to run unless `SCANNER_ENV=dev` and `SCANNER_API_ALLOW_REMOTE`
+is unset. There is no `--reset` and no undo: observations, triage snapshots and review events
+are append-only and refuse `DELETE` (ADR-0002). To start over, rebuild the schema with
+`uv run alembic downgrade base && uv run alembic upgrade head`.
+
+The analyst UI (M4, P20 — the component system; screens arrive in P21):
+
+```bash
+cd frontend && npm install
+npm run dev                 # the component gallery on http://127.0.0.1:5173
+npm run check               # lint + format + type-check + component tests
+```
+
+Serving the API (M4, P18–P19):
 
 ```bash
 # SCANNER_TENANT_ID must be set — the API scopes every query to it, and a request
 # cannot name a tenant. See .env.example.
 uv run uvicorn api.main:app --host 127.0.0.1 --port 8000
 ```
+
+`api.main:app` is the entrypoint, and the only one: `api/app.py` exposes `create_app(config)`
+rather than a module-level `app`, so importing it in a test does not require a live
+environment. Run it through `uv run` — a bare `uvicorn` picks up whatever is first on `PATH`,
+which on a machine with Anaconda installed is a different interpreter with different pinned
+versions. With `SCANNER_ENV=dev` the interactive schema browser is at `/docs`; in any other
+environment it is off, because an unauthenticated schema browser is a map of the attack
+surface.
 
 **Do not expose this beyond localhost.** There is no authentication yet (m4-design §5), so
 the API refuses non-loopback callers regardless of what it is bound to. `SCANNER_API_ALLOW_REMOTE=1`
@@ -97,7 +133,7 @@ secret is actually used.
 
 ## Status
 
-**M0–M3 complete (P1–P17); M4 started — the API, reads and the one write (P18–P19).** A capture goes end to end: parsers turn an ARP
+**M0–M3 complete (P1–P17); M4 in progress — the API (P18–P19) and the frontend's component system (P20).** A capture goes end to end: parsers turn an ARP
 table, DHCP leases, or mDNS output into provenance-complete observations; the engine calls
 `require_authorized` on every target *before* anything is recorded; the sink writes them
 idempotently into the append-only spine; entity resolution collapses them into assets by stable

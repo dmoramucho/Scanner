@@ -1,0 +1,54 @@
+# An ISC `dhcpd.leases` extract for the demo estate.
+#
+# This is the second source, and DHCP rather than mDNS on purpose. mDNS announces a hostname
+# and an address and nothing else — both weak anchors — so an mDNS record can never merge with
+# an ARP sighting and would leave every host in this estate split across two assets. A DHCP
+# lease carries the MAC *and* the hostname in one record, so entity resolution joins it to the
+# ARP sighting on the strong anchor and the asset ends up with both.
+#
+# 10.10.60.88 is deliberately absent: it answers ARP and holds no lease, which is what a
+# statically-addressed device nobody wrote down looks like. It stays unidentified, and that is
+# the shadow-IT case the triage queue exists for.
+#
+# The last block is `free` on purpose — an expired lease is the absence of a device, and the
+# parser has to drop it rather than report a host that went home.
+
+lease 10.10.10.11 {
+  starts 6 2026/08/16 09:15:00;
+  ends 6 2026/08/16 21:15:00;
+  binding state active;
+  hardware ethernet 00:50:56:a1:00:11;
+  client-hostname "web-01";
+}
+
+lease 10.10.10.12 {
+  starts 6 2026/08/16 09:12:00;
+  ends 6 2026/08/16 21:12:00;
+  binding state active;
+  hardware ethernet 00:50:56:a1:00:12;
+  client-hostname "db-01";
+}
+
+lease 10.10.60.31 {
+  starts 6 2026/08/16 08:58:00;
+  ends 6 2026/08/16 20:58:00;
+  binding state active;
+  hardware ethernet 00:40:8c:9d:1e:2f;
+  client-hostname "cam-lobby-01";
+}
+
+lease 10.10.60.20 {
+  starts 6 2026/08/16 08:41:00;
+  ends 6 2026/08/16 20:41:00;
+  binding state active;
+  hardware ethernet 00:80:77:31:4a:b2;
+  client-hostname "printer-3f";
+}
+
+lease 10.10.60.77 {
+  starts 5 2026/08/15 19:02:00;
+  ends 5 2026/08/15 23:02:00;
+  binding state free;
+  hardware ethernet 9c:8e:cd:00:aa:01;
+  client-hostname "contractor-laptop";
+}

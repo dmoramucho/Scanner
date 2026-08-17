@@ -1,0 +1,87 @@
+/* Distinction 3: AI output never shares a surface with deterministic facts.
+
+   The separation is structural, not decorative — a tinted surface, a coloured left rule, and
+   a header that says so in words. An analyst glancing at a screen must never have to work out
+   which half of it a model wrote (ux-design §2). */
+.ai-panel {
+  border: var(--border-width) solid var(--ai-border);
+  border-left: var(--rule-width) solid var(--ai-rule);
+  border-radius: var(--radius-md);
+  background: var(--ai-surface);
+  padding: var(--space-3) var(--space-4);
+}
+
+.ai-panel__header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.ai-panel__label {
+  color: var(--ai-fg);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.ai-panel__spacer {
+  flex: 1;
+}
+
+.ai-panel__body {
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+
+.ai-panel__citations {
+  margin: var(--space-3) 0 0;
+  padding: var(--space-2) 0 0;
+  border-top: var(--border-width) solid var(--ai-border);
+  list-style: none;
+}
+
+.ai-panel__citations-label {
+  color: var(--ai-fg);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+}
+
+.ai-panel__citation {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+  font-size: var(--text-xs);
+}
+
+.ai-panel__citation-ref {
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+
+.ai-panel__citation-quote {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* The counterweight: a deterministic fact panel, so the two can sit side by side and read
+   as different kinds of thing. */
+.fact-panel {
+  border: var(--border-width) solid var(--fact-border);
+  border-radius: var(--radius-md);
+  background: var(--fact-surface);
+  padding: var(--space-3) var(--space-4);
+  box-shadow: var(--shadow-sm);
+}
+
+.fact-panel__label {
+  margin-bottom: var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}

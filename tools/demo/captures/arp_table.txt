@@ -1,0 +1,16 @@
+# `ip neigh` as it would come off the core switch's management host — the demo estate.
+#
+# Authorized range is 10.10.0.0/16 (see tools/demo/estate.py). 192.168.99.14 is a
+# neighbouring VLAN we are deliberately NOT authorized for: it is here so the seeded estate
+# contains a real scope denial, audited and asset-less, rather than a story about one.
+#
+# The last two lines are malformed on purpose. A capture that parses perfectly proves
+# nothing about a parser that has to survive real switch output.
+10.10.10.11 dev eth0 lladdr 00:50:56:a1:00:11 REACHABLE
+10.10.10.12 dev eth0 lladdr 00:50:56:a1:00:12 REACHABLE
+10.10.60.31 dev eth0 lladdr 00:40:8c:9d:1e:2f REACHABLE
+10.10.60.20 dev eth0 lladdr 00:80:77:31:4a:b2 STALE
+10.10.60.88 dev eth0 lladdr 3c:22:fb:aa:bb:cc REACHABLE
+192.168.99.14 dev eth1 lladdr de:ad:be:ef:00:01 REACHABLE
+10.10.60.99 dev eth0 lladdr  INCOMPLETE
+this is not an arp entry at all
