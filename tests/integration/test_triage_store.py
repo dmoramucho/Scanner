@@ -19,7 +19,7 @@ import psycopg
 import pytest
 
 from adapters.postgres.triage_store import PostgresDossierSource, PostgresTriageStore
-from domain.errors import NotFoundError, ValidationError
+from domain.errors import ConflictError, NotFoundError, ValidationError
 from domain.models import (
     AssetClass,
     CitedSource,
@@ -212,7 +212,7 @@ def test_a_grounded_insight_persists_as_a_proposal(conn: Connection, tenant: UUI
     store.record_snapshot(triage)
 
     record = store.record_insight(proposal(triage))
-    stored = store.insight(record.insight_id)
+    stored = store.insight(tenant, record.insight_id)
 
     assert stored is not None
     assert stored.state == "proposed"
@@ -254,17 +254,19 @@ def test_a_human_review_is_recorded_with_who_and_when(conn: Connection, tenant: 
     record = store.record_insight(proposal(triage))
 
     reviewed = store.review_insight(
+        tenant,
         InsightReview(
             insight_id=record.insight_id,
             outcome=ReviewOutcome.REJECTED,
             reviewer="dmora",
             rationale="The affected module is not loaded on this host.",
-        )
+        ),
     )
     accepted = store.review_insight(
+        tenant,
         InsightReview(
             insight_id=record.insight_id, outcome=ReviewOutcome.ACCEPTED, reviewer="dmora"
-        )
+        ),
     )
 
     assert reviewed.state == "human_reviewed"
@@ -284,18 +286,22 @@ def test_a_review_cannot_run_backwards(conn: Connection, tenant: UUID) -> None:
     store.record_snapshot(triage)
     record = store.record_insight(proposal(triage))
     store.review_insight(
+        tenant,
         InsightReview(
             insight_id=record.insight_id, outcome=ReviewOutcome.ACCEPTED, reviewer="dmora"
-        )
+        ),
     )
 
-    with pytest.raises(ValidationError, match="forward-only"):
+    # A conflict with the state that exists, not a malformed request — which is what lets
+    # the API answer 409 rather than 422 (ADR-0017).
+    with pytest.raises(ConflictError, match="forward-only"):
         store.review_insight(
+            tenant,
             InsightReview(
                 insight_id=record.insight_id,
                 outcome=ReviewOutcome.REJECTED,
                 reviewer="someone-else",
-            )
+            ),
         )
 
 
@@ -307,16 +313,18 @@ def test_a_review_must_name_a_reviewer(conn: Connection, tenant: UUID) -> None:
 
     with pytest.raises(ValidationError):
         store.review_insight(
+            tenant,
             InsightReview(
                 insight_id=record.insight_id, outcome=ReviewOutcome.ACCEPTED, reviewer="   "
-            )
+            ),
         )
 
 
-def test_reviewing_an_insight_that_does_not_exist_raises(conn: Connection) -> None:
+def test_reviewing_an_insight_that_does_not_exist_raises(conn: Connection, tenant: UUID) -> None:
     with pytest.raises(NotFoundError):
         PostgresTriageStore(conn).review_insight(
-            InsightReview(insight_id=uuid4(), outcome=ReviewOutcome.ACCEPTED, reviewer="dmora")
+            tenant,
+            InsightReview(insight_id=uuid4(), outcome=ReviewOutcome.ACCEPTED, reviewer="dmora"),
         )
 
 
@@ -379,14 +387,15 @@ def test_a_review_writes_an_immutable_event(conn: Connection, tenant: UUID) -> N
     record = store.record_insight(proposal(triage))
 
     store.review_insight(
+        tenant,
         InsightReview(
             insight_id=record.insight_id,
             outcome=ReviewOutcome.ACCEPTED,
             reviewer="dmora",
             rationale="Agreed — the host is internet-facing.",
-        )
+        ),
     )
-    history = store.review_history(record.insight_id)
+    history = store.review_history(tenant, record.insight_id)
 
     assert len(history) == 1
     assert history[0].kind == "accept"
@@ -404,9 +413,10 @@ def test_the_review_event_table_refuses_update_and_delete(conn: Connection, tena
     store.record_snapshot(triage)
     record = store.record_insight(proposal(triage))
     store.review_insight(
+        tenant,
         InsightReview(
             insight_id=record.insight_id, outcome=ReviewOutcome.ACCEPTED, reviewer="dmora"
-        )
+        ),
     )
 
     with pytest.raises(psycopg.errors.RaiseException):
@@ -419,9 +429,10 @@ def test_a_review_event_cannot_be_deleted(conn: Connection, tenant: UUID) -> Non
     store.record_snapshot(triage)
     record = store.record_insight(proposal(triage))
     store.review_insight(
+        tenant,
         InsightReview(
             insight_id=record.insight_id, outcome=ReviewOutcome.ACCEPTED, reviewer="dmora"
-        )
+        ),
     )
 
     with pytest.raises(psycopg.errors.RaiseException):
@@ -435,21 +446,23 @@ def test_the_history_reads_back_in_order(conn: Connection, tenant: UUID) -> None
     record = store.record_insight(proposal(triage))
 
     store.review_insight(
+        tenant,
         InsightReview(
             insight_id=record.insight_id,
             outcome=ReviewOutcome.ADJUSTED,
             reviewer="ana",
             recommendation="maintain",
             rationale="Right finding, wrong urgency.",
-        )
+        ),
     )
     store.review_insight(
+        tenant,
         InsightReview(
             insight_id=record.insight_id, outcome=ReviewOutcome.ACCEPTED, reviewer="dmora"
-        )
+        ),
     )
 
-    history = store.review_history(record.insight_id)
+    history = store.review_history(tenant, record.insight_id)
 
     assert [event.kind for event in history] == ["adjust", "accept"]
     assert [event.reviewer for event in history] == ["ana", "dmora"]
@@ -465,19 +478,20 @@ def test_the_projection_and_the_event_commit_together(conn: Connection, tenant: 
     record = store.record_insight(proposal(triage))
 
     store.review_insight(
+        tenant,
         InsightReview(
             insight_id=record.insight_id,
             outcome=ReviewOutcome.REJECTED,
             reviewer="dmora",
             rationale="Not reachable from the network this sits on.",
-        )
+        ),
     )
 
     row = conn.execute(
         "select state, review_outcome, reviewed_by from insight where id = %s",
         (record.insight_id,),
     ).fetchone()
-    history = store.review_history(record.insight_id)
+    history = store.review_history(tenant, record.insight_id)
 
     assert row is not None
     # A rejection is reviewed-and-not-accepted: the contract's lifecycle cannot say that on
@@ -499,12 +513,13 @@ def test_an_adjustment_records_the_analysts_own_recommendation(
     record = store.record_insight(proposal(triage, recommendation="raise_priority"))
 
     store.review_insight(
+        tenant,
         InsightReview(
             insight_id=record.insight_id,
             outcome=ReviewOutcome.ADJUSTED,
             reviewer="ana",
             recommendation="maintain",
-        )
+        ),
     )
 
     row = conn.execute(
@@ -525,9 +540,10 @@ def test_an_adjustment_that_adjusts_nothing_is_refused(conn: Connection, tenant:
 
     with pytest.raises(ValidationError, match="analyst's recommendation"):
         store.review_insight(
+            tenant,
             InsightReview(
                 insight_id=record.insight_id, outcome=ReviewOutcome.ADJUSTED, reviewer="ana"
-            )
+            ),
         )
 
 
@@ -542,12 +558,13 @@ def test_the_analyst_cannot_bury_a_kev_finding_either(conn: Connection, tenant: 
 
     with pytest.raises(ValidationError, match="KEV"):
         store.review_insight(
+            tenant,
             InsightReview(
                 insight_id=record.insight_id,
                 outcome=ReviewOutcome.ADJUSTED,
                 reviewer="ana",
                 recommendation="lower_priority",
-            )
+            ),
         )
 
     with pytest.raises(psycopg.errors.CheckViolation):
@@ -607,3 +624,58 @@ def test_the_database_refuses_a_priority_with_no_explanation(
         )
 
     assert "vuln_match_priority_explained" in str(raised.value)
+
+
+def test_an_identical_decision_resubmitted_writes_nothing(conn: Connection, tenant: UUID) -> None:
+    """A retried request must not become a second entry in an immutable history.
+
+    A double-clicked button, or a client that never saw the first response, sends the same
+    decision again. The state is already what it asks for, so the second call returns it and
+    writes nothing — the history says a human decided once, because a human did (ADR-0017).
+    """
+    triage = snapshot_for(conn, tenant)
+    store = PostgresTriageStore(conn)
+    store.record_snapshot(triage)
+    record = store.record_insight(proposal(triage))
+    decision = InsightReview(
+        insight_id=record.insight_id, outcome=ReviewOutcome.ACCEPTED, reviewer="dmora"
+    )
+
+    first = store.review_insight(tenant, decision)
+    second = store.review_insight(tenant, decision)
+
+    assert first.state == second.state == "accepted"
+    assert len(store.review_history(tenant, record.insight_id)) == 1
+
+
+def test_a_review_cannot_reach_another_tenants_insight(conn: Connection, tenant: UUID) -> None:
+    """The scoping the API depends on, enforced in the store as well.
+
+    A review of an insight belonging to someone else is `NotFoundError` — the same answer as
+    one that does not exist, so an id cannot be tested for existence (ADR-0016).
+    """
+    triage = snapshot_for(conn, tenant)
+    store = PostgresTriageStore(conn)
+    store.record_snapshot(triage)
+    record = store.record_insight(proposal(triage))
+
+    # A real decision first, so the history is non-empty and the scoping below is asserting
+    # something: an empty history proves nothing if there was never anything to hide.
+    store.review_insight(
+        tenant,
+        InsightReview(
+            insight_id=record.insight_id, outcome=ReviewOutcome.ACCEPTED, reviewer="dmora"
+        ),
+    )
+    assert len(store.review_history(tenant, record.insight_id)) == 1
+
+    other = uuid4()
+    assert store.insight(other, record.insight_id) is None
+    assert store.review_history(other, record.insight_id) == []
+    with pytest.raises(NotFoundError):
+        store.review_insight(
+            other,
+            InsightReview(
+                insight_id=record.insight_id, outcome=ReviewOutcome.REJECTED, reviewer="mallory"
+            ),
+        )

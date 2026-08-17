@@ -19,9 +19,18 @@ loopback only, unless an operator explicitly sets `SCANNER_API_ALLOW_REMOTE=1`. 
 "do not expose this beyond localhost" from a sentence in a README into behaviour: bind it to
 `0.0.0.0` by mistake and remote clients still get a 403.
 
-**The connection is read-only at the database.** P18 has no write endpoints, and rather than
-rely on that staying true by inspection, every request runs on a connection with
-`read_only = True`. Postgres refuses a write on it, so a bug cannot become a mutation.
+**Read paths are read-only at the database.** Every read request runs on a connection with
+`read_only = True`, so Postgres refuses a mutation on it and a bug cannot become one. P19
+adds exactly one write endpoint, and it takes a *separate* writable connection
+(`write_connection`) — the capability is granted to one route rather than to the app, so
+widening it is a visible change to a dependency rather than an invisible consequence of
+adding a handler (ADR-0017).
+
+**The reviewer is server-side, like the tenant.** With no authentication, a caller-supplied
+name in an immutable audit trail is worse than a placeholder that says what it is: anyone
+could write a colleague's name into the review history. `reviewer_context()` is the other
+half of the auth seam, and it starts returning the authenticated principal at the same
+moment `tenant_context()` does.
 """
 
 from __future__ import annotations
@@ -35,7 +44,7 @@ import psycopg
 from fastapi import Depends, HTTPException, Request, status
 
 from adapters.postgres.read_model import PostgresReadModel
-from adapters.postgres.triage_store import PostgresDossierSource
+from adapters.postgres.triage_store import PostgresDossierSource, PostgresTriageStore
 from config.settings import AppConfig, ConfigError, load_config
 from engine.dossier import DossierAssembler
 
@@ -106,6 +115,41 @@ def read_connection(
         yield conn
 
 
+def write_connection(
+    config: Annotated[AppConfig, Depends(app_config)],
+) -> Iterator[psycopg.Connection[tuple[object, ...]]]:
+    """A writable connection, for the one route that writes.
+
+    Deliberately not the default. P19 adds a single write — the analyst's review decision —
+    and giving that route its own connection keeps "this endpoint can mutate the estate" a
+    thing you can see in a signature rather than a property of the whole app. Committed on a
+    clean return, rolled back on any exception, by psycopg's context manager.
+    """
+    with psycopg.connect(config.database_url.reveal()) as conn:
+        yield conn
+
+
+def reviewer_context(config: Annotated[AppConfig, Depends(app_config)]) -> str:
+    """Who a review is recorded as.
+
+    **The auth seam, second half.** Today it is a configured placeholder — `local-operator`
+    by default — and it is deliberately *not* taken from the request body: on an
+    unauthenticated API that would let any caller attribute a decision to a named colleague,
+    in an append-only history that cannot be corrected (m4-design §5, ADR-0017).
+    """
+    reviewer = config.api_reviewer.strip()
+    if not reviewer:  # pragma: no cover — config supplies a default
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="unavailable")
+    return reviewer
+
+
+def review_store(
+    conn: Annotated[psycopg.Connection[tuple[object, ...]], Depends(write_connection)],
+) -> PostgresTriageStore:
+    """The only write-capable store the API exposes."""
+    return PostgresTriageStore(conn)
+
+
 def read_model(
     conn: Annotated[psycopg.Connection[tuple[object, ...]], Depends(read_connection)],
 ) -> PostgresReadModel:
@@ -149,12 +193,16 @@ def _is_loopback(host: str) -> bool:
 
 
 TenantId = Annotated[UUID, Depends(tenant_context)]
+Reviewer = Annotated[str, Depends(reviewer_context)]
+ReviewStore = Annotated[PostgresTriageStore, Depends(review_store)]
 Reads = Annotated[PostgresReadModel, Depends(read_model)]
 Dossiers = Annotated[DossierAssembler, Depends(dossier_assembler)]
 
 __all__: Sequence[str] = [
     "Dossiers",
     "Reads",
+    "ReviewStore",
+    "Reviewer",
     "TenantId",
     "app_config",
     "configured",
@@ -162,5 +210,8 @@ __all__: Sequence[str] = [
     "read_connection",
     "read_model",
     "require_local_client",
+    "review_store",
+    "reviewer_context",
     "tenant_context",
+    "write_connection",
 ]

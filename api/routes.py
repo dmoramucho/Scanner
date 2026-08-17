@@ -10,6 +10,11 @@ An endpoint that sorted, scored or filtered on its own would be business logic i
 `tenant` is a dependency, never a parameter. There is no route below that accepts a tenant
 identifier from the caller, which is what makes "no endpoint can read across the tenant
 boundary" a property of the routing table rather than a habit.
+
+**One route writes.** The analyst's review decision is the only mutation this API offers, it
+takes a write-capable connection no other route has, and it re-enforces every rule the UI
+will merely *reflect*. A disabled button is a convenience; the refusal below is the control
+(m4-design §1).
 """
 
 from __future__ import annotations
@@ -26,14 +31,16 @@ from api.schemas import (
     AssetQuery,
     FindingOut,
     InsightQueueItemOut,
+    ReviewOut,
+    ReviewRequest,
     SummaryOut,
     WorklistOut,
     WorklistQuery,
     asset_detail_out,
 )
-from api.security import Dossiers, Reads, TenantId
+from api.security import Dossiers, Reads, Reviewer, ReviewStore, TenantId
 from domain.errors import NotFoundError
-from domain.models import AssetFilters
+from domain.models import AssetFilters, InsightReview
 
 router = APIRouter(prefix="/api")
 
@@ -130,6 +137,52 @@ def asset_findings(tenant: TenantId, reads: Reads, asset_id: UUID) -> list[Findi
         # know. Answering `[]` would confirm the id exists somewhere.
         raise NotFoundError(f"no asset {asset_id}")
     return [FindingOut.of(finding) for finding in findings]
+
+
+@router.post(
+    "/insights/{insight_id}/review",
+    response_model=ReviewOut,
+    summary="Record the analyst's decision on an insight",
+)
+def review_insight(
+    tenant: TenantId,
+    reviewer: Reviewer,
+    store: ReviewStore,
+    insight_id: UUID,
+    decision: ReviewRequest,
+) -> ReviewOut:
+    """Accept, reject or adjust one insight — the only write in the API.
+
+    **The KEV floor is enforced here, not in the UI.** A decision that would bury a finding
+    CISA lists as actively exploited is refused with a 422, and the refusal does not depend
+    on any frontend state: a request crafted by hand, by a script, or by a UI with the button
+    re-enabled in a debugger meets exactly the same check (AGENTS.md §2.8, m4-design §1).
+    Two more layers sit behind it — the store repeats the check, and the DB CHECK
+    `insight_analyst_kev_not_hidden` refuses the row — so the guarantee survives a refactor
+    of any single one of them.
+
+    The state change and its immutable `insight_review_event` are written in one transaction
+    (P17): there is no path that records a decision without recording who made it, and none
+    that records who without the decision.
+
+    Retrying an identical decision is a no-op that returns the current state — a
+    double-clicked button must not become a second entry in an append-only history. A
+    *different* decision that would move the lifecycle backwards is a 409, because it
+    conflicts with a decision a human already made (ADR-0017).
+    """
+    insight = store.review_insight(
+        tenant,
+        InsightReview(
+            insight_id=insight_id,
+            outcome=decision.outcome,
+            # Never from the request: with no authentication, a caller-supplied name would
+            # let anyone sign a colleague to a decision (ADR-0017).
+            reviewer=reviewer,
+            recommendation=decision.recommendation,
+            rationale=decision.rationale,
+        ),
+    )
+    return ReviewOut.of(insight, store.review_history(tenant, insight_id))
 
 
 def routers() -> Sequence[APIRouter]:

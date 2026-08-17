@@ -97,7 +97,7 @@ secret is actually used.
 
 ## Status
 
-**M0–M3 complete (P1–P17); M4 started — the read API (P18).** A capture goes end to end: parsers turn an ARP
+**M0–M3 complete (P1–P17); M4 started — the API, reads and the one write (P18–P19).** A capture goes end to end: parsers turn an ARP
 table, DHCP leases, or mDNS output into provenance-complete observations; the engine calls
 `require_authorized` on every target *before* anything is recorded; the sink writes them
 idempotently into the append-only spine; entity resolution collapses them into assets by stable
@@ -179,6 +179,13 @@ What the system guarantees, each proven by tests:
   of what it can express. Requests run on a read-only database connection. Errors carry a code,
   a safe sentence and a request id — never a stack trace, SQL, or an internal identifier — and
   a 404 is the same sentence whether the thing is missing or in another tenant (ADR-0016).
+- **The one write re-enforces what the UI merely reflects.** The analyst's review decision
+  (accept / reject / adjust) is the only mutation the API offers, and it refuses to bury a
+  KEV-listed finding no matter who asks — a hand-built request that skips the frontend
+  entirely meets exactly the same 422 as a button click would. The state change and its
+  immutable review event commit together, an identical re-submission writes nothing, and a
+  backwards transition is a 409. The write capability belongs to that one route: every other
+  endpoint still runs on a read-only connection (ADR-0017).
 - **There is no authentication yet, and that is enforced rather than noted.** The API refuses
   any non-loopback caller unless an operator explicitly turns the gate off. Do not expose it
   beyond localhost until real auth exists — that is the gate to exposure, not a to-do.

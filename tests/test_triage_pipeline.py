@@ -117,14 +117,18 @@ class FakeStore:
         )
 
     def review_insight(
-        self, review: InsightReview
+        self, tenant_id: UUID, review: InsightReview
     ) -> InsightProposal:  # pragma: no cover — the store's own tests cover review
         raise NotImplementedError
 
-    def review_history(self, insight_id: UUID) -> Sequence[InsightReviewEvent]:  # pragma: no cover
+    def review_history(
+        self, tenant_id: UUID, insight_id: UUID
+    ) -> Sequence[InsightReviewEvent]:  # pragma: no cover
         return []
 
-    def insight(self, insight_id: UUID) -> InsightProposal | None:  # pragma: no cover
+    def insight(
+        self, tenant_id: UUID, insight_id: UUID
+    ) -> InsightProposal | None:  # pragma: no cover
         return None
 
     def snapshot(self, triage_id: UUID) -> TriageDossier | None:  # pragma: no cover

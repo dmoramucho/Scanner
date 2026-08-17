@@ -68,6 +68,9 @@ OPTIONAL_DEFAULTS: Final[Mapping[str, str]] = {
     # slow. Long enough to be kind to the feed, short enough that a new CVE lands the next
     # working day.
     "SCANNER_NVD_CACHE_TTL_HOURS": "24",
+    # Recorded on every review until authentication exists. Deliberately not a person's
+    # name: the audit trail should say what it actually knows (ADR-0017).
+    "SCANNER_API_REVIEWER": "local-operator",
 }
 
 
@@ -115,6 +118,10 @@ class AppConfig:
     #: query by it, and it is read from configuration rather than from a request — a caller
     #: cannot select a tenant (m4-design §1, ADR-0016).
     tenant_id: UUID | None
+    #: Who a review is recorded as until there is authentication. A placeholder, named as
+    #: one: an unauthenticated caller must not be able to write a colleague's name into an
+    #: immutable audit trail (ADR-0017).
+    api_reviewer: str
     #: True only when an operator has explicitly accepted that the API answers non-loopback
     #: clients. Off by default because authentication is deferred (m4-design §5).
     api_allow_remote: bool
@@ -197,6 +204,7 @@ def load_config(env: Mapping[str, str] | None = None) -> AppConfig:
         # Opt-in, and deliberately awkward to enable: until there is real authentication,
         # anything that can reach this API is authenticated by nothing at all.
         api_allow_remote=source.get("SCANNER_API_ALLOW_REMOTE", "").strip() == "1",
+        api_reviewer=optional("SCANNER_API_REVIEWER"),
     )
 
 

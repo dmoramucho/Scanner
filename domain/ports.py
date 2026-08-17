@@ -617,7 +617,7 @@ class TriageStore(Protocol):
         generator has already refused both, and this is the backstop."""
         ...
 
-    def review_insight(self, review: InsightReview) -> InsightProposal:
+    def review_insight(self, tenant_id: UUID, review: InsightReview) -> InsightProposal:
         """Record one human decision: the current-state update *and* the history event, in
         one transaction.
 
@@ -625,15 +625,22 @@ class TriageStore(Protocol):
         until a human says otherwise, which is the point of the state existing at all
         (AGENTS.md §2.8). Both writes commit together, like the merge path — a projection
         that can disagree with its own history is worse than no projection.
+
+        Refuses, with `ValidationError`, any decision that would bury a KEV-listed finding —
+        the rule the model is held to, applied to the human. Raises `ConflictError` on a
+        backwards transition, and treats an identical re-submitted decision as a no-op so a
+        retry cannot become a second entry in an immutable history (ADR-0017).
         """
         ...
 
-    def review_history(self, insight_id: UUID) -> Sequence[InsightReviewEvent]:
+    def review_history(self, tenant_id: UUID, insight_id: UUID) -> Sequence[InsightReviewEvent]:
         """Every review decision on this insight, oldest first. Append-only, so this is the
         record and the columns on `insight` are the summary (data-model §4)."""
         ...
 
-    def insight(self, insight_id: UUID) -> InsightProposal | None: ...
+    def insight(self, tenant_id: UUID, insight_id: UUID) -> InsightProposal | None:
+        """One insight, or None — including for an insight belonging to another tenant."""
+        ...
 
     def snapshot(self, triage_id: UUID) -> TriageDossier | None:
         """The retained snapshot behind an insight — what the model actually saw."""

@@ -125,7 +125,13 @@ _INSIGHT_SQL: Final = """
 _INSIGHT_READ_SQL: Final = """
     select id, triage_id, recommendation, rationale, cited_sources, confidence,
            model_version, state, kev_locked_visible
-    from insight where id = %(id)s
+    from insight where tenant_id = %(tenant_id)s and id = %(id)s
+"""
+
+#: The review columns the contract model does not carry, read for the idempotency check.
+_REVIEW_PROJECTION_SQL: Final = """
+    select review_outcome, analyst_recommendation
+    from insight where tenant_id = %(tenant_id)s and id = %(id)s
 """
 
 _REVIEW_SQL: Final = """
@@ -151,7 +157,7 @@ _REVIEW_HISTORY_SQL: Final = """
     select id, insight_id, kind, from_state, to_state, recommendation, reviewer, rationale,
            occurred_at
     from insight_review_event
-    where insight_id = %(insight_id)s
+    where tenant_id = %(tenant_id)s and insight_id = %(insight_id)s
     order by occurred_at, id
 """
 
@@ -360,12 +366,17 @@ class PostgresTriageStore:
             raise ConflictError("insight was not written")
         return InsightRecord(insight_id=row[0], triage_id=insight.triage_id, created=True)
 
-    def review_insight(self, review: InsightReview) -> InsightProposal:
+    def review_insight(self, tenant_id: UUID, review: InsightReview) -> InsightProposal:
         """Record one human decision — the projection and the history, together.
 
         The two writes commit as one transaction, exactly as the merge path does: a
         current-state column that can disagree with its own event log is worse than having
         no column at all (data-model §4).
+
+        `tenant_id` is the first parameter for the same reason it is on every `ReadModel`
+        method: there must be no way to reach an insight without saying whose it is. A
+        review of another tenant's insight is `NotFoundError`, indistinguishable from one
+        that does not exist (ADR-0016).
         """
         name = review.reviewer.strip()
         if not name:
@@ -375,21 +386,23 @@ class PostgresTriageStore:
             # The DB says so too (`insight_review_adjust_has_change`).
             raise ValidationError("an adjusted review must carry the analyst's recommendation")
 
-        current = self.insight(review.insight_id)
+        current = self.insight(tenant_id, review.insight_id)
         if current is None:
             raise NotFoundError(f"no insight {review.insight_id}")
 
+        self._refuse_kev_suppression(current, review)
+
         target = review.resulting_state
+        if self._is_repeat(tenant_id, review, current):
+            # The same decision, already recorded. Returning the current state writes
+            # nothing: a retried request — a double-clicked button, a client that lost the
+            # response — must not become a second entry in an immutable history (ADR-0017).
+            return current
         if _REVIEW_ORDER.index(target) < _REVIEW_ORDER.index(current.state):
-            # Forward only. Re-reviewing backwards would quietly erase a human decision.
-            raise ValidationError(
+            # Forward only. Re-reviewing backwards would quietly erase a human decision, so
+            # it is a conflict with the state that exists — not a malformed request.
+            raise ConflictError(
                 f"cannot move an insight from {current.state} to {target}; review is forward-only"
-            )
-        if current.kev_locked_visible and review.recommendation == "lower_priority":
-            # The rule the model is held to, applied to the human. The UX is explicit that
-            # neither may bury an actively-exploited finding; the DB CHECK agrees.
-            raise ValidationError(
-                "refusing to record an analyst recommendation that hides a KEV-listed finding"
             )
 
         with self._conn.transaction():
@@ -406,7 +419,7 @@ class PostgresTriageStore:
             self._conn.execute(
                 _REVIEW_EVENT_SQL,
                 {
-                    "tenant_id": self._tenant_of(review.insight_id),
+                    "tenant_id": tenant_id,
                     "insight_id": review.insight_id,
                     "kind": _EVENT_KINDS[review.outcome],
                     "from_state": current.state,
@@ -417,14 +430,56 @@ class PostgresTriageStore:
                 },
             )
 
-        reviewed = self.insight(review.insight_id)
+        reviewed = self.insight(tenant_id, review.insight_id)
         if reviewed is None:  # pragma: no cover — it existed a statement ago
             raise NotFoundError(f"no insight {review.insight_id}")
         return reviewed
 
-    def review_history(self, insight_id: UUID) -> Sequence[InsightReviewEvent]:
-        """Every decision on this insight, oldest first."""
-        rows = self._conn.execute(_REVIEW_HISTORY_SQL, {"insight_id": insight_id}).fetchall()
+    def _refuse_kev_suppression(self, current: InsightProposal, review: InsightReview) -> None:
+        """The KEV floor, applied to the human (AGENTS.md §2.8, ux-design §4).
+
+        Two ways a decision could bury an actively-exploited finding, and both are refused:
+        the analyst substituting `lower_priority` of their own, and the analyst *accepting* a
+        stored insight that recommends it. The second should be unreachable — the DB CHECK
+        `insight_kev_not_hidden` refuses to store such a row — and it is checked anyway,
+        because "unreachable" is a claim about today's code and this is a claim about the
+        finding staying visible.
+        """
+        if not current.kev_locked_visible:
+            return
+        if review.recommendation == "lower_priority":
+            raise ValidationError(
+                "refusing to record an analyst recommendation that hides a KEV-listed "
+                "finding: CISA lists it as actively exploited"
+            )
+        if review.outcome is ReviewOutcome.ACCEPTED and current.recommendation == "lower_priority":
+            raise ValidationError(  # pragma: no cover — the DB CHECK prevents the row
+                "refusing to accept a recommendation that hides a KEV-listed finding"
+            )
+
+    def _is_repeat(self, tenant_id: UUID, review: InsightReview, current: InsightProposal) -> bool:
+        """Is this the decision already recorded, sent again?
+
+        Identical means identical: same resulting state, same outcome, same analyst
+        recommendation. A *different* decision is not a repeat — it is either a forward
+        transition or a conflict, and both are answered rather than absorbed.
+        """
+        if current.state != review.resulting_state:
+            return False
+        row = self._conn.execute(
+            _REVIEW_PROJECTION_SQL, {"tenant_id": tenant_id, "id": review.insight_id}
+        ).fetchone()
+        if row is None:  # pragma: no cover — the caller just read this insight
+            return False
+        outcome = None if row[0] is None else ReviewOutcome(str(row[0]))
+        recommendation = _text_or_none(row[1])
+        return outcome is review.outcome and recommendation == review.recommendation
+
+    def review_history(self, tenant_id: UUID, insight_id: UUID) -> Sequence[InsightReviewEvent]:
+        """Every decision on this insight, oldest first. Tenant-scoped like everything else."""
+        rows = self._conn.execute(
+            _REVIEW_HISTORY_SQL, {"tenant_id": tenant_id, "insight_id": insight_id}
+        ).fetchall()
         return [
             InsightReviewEvent(
                 event_id=row[0],
@@ -444,17 +499,10 @@ class PostgresTriageStore:
             for row in rows
         ]
 
-    def _tenant_of(self, insight_id: UUID) -> UUID:
+    def insight(self, tenant_id: UUID, insight_id: UUID) -> InsightProposal | None:
         row = self._conn.execute(
-            "select tenant_id from insight where id = %(id)s", {"id": insight_id}
+            _INSIGHT_READ_SQL, {"tenant_id": tenant_id, "id": insight_id}
         ).fetchone()
-        if row is None:  # pragma: no cover — the caller has already read the insight
-            raise NotFoundError(f"no insight {insight_id}")
-        tenant_id: UUID = row[0]
-        return tenant_id
-
-    def insight(self, insight_id: UUID) -> InsightProposal | None:
-        row = self._conn.execute(_INSIGHT_READ_SQL, {"id": insight_id}).fetchone()
         if row is None:
             return None
         return InsightProposal(

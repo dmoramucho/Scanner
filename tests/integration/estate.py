@@ -141,4 +141,5 @@ def api_config(tenant: UUID, database_url: str) -> AppConfig:
         vlan_map=SubnetVlanMap.from_mapping({"10.0.60.0/24": "VLAN 60 (IoT)"}),
         tenant_id=tenant,
         api_allow_remote=False,
+        api_reviewer="local-operator",
     )

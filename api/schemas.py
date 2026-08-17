@@ -28,10 +28,13 @@ from domain.models import (
     AssetDossier,
     AssetPage,
     ConfidenceState,
+    InsightProposal,
+    InsightReviewEvent,
     InsightSummary,
     ManagementState,
     Priority,
     Reachability,
+    ReviewOutcome,
     TimelineEntry,
     VersionSource,
     WorklistFinding,
@@ -322,6 +325,86 @@ class WorklistQuery(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     limit: Annotated[int, Field(ge=1, le=200)] = 50
+
+
+class ReviewRequest(BaseModel):
+    """The analyst's decision, validated before it can touch anything.
+
+    Three fields, and two deliberate absences. There is no `reviewer` — who decided is
+    server-side, because an unauthenticated caller must not be able to sign a colleague's
+    name to an entry in an append-only history. And there is no `state`: the lifecycle is
+    derived from the outcome, so a caller cannot ask for a transition and an outcome that
+    disagree (ADR-0017).
+
+    `extra="forbid"` makes both of those refusals visible: sending `reviewer` is a 422, not
+    a field quietly ignored (AGENTS.md §68).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    outcome: ReviewOutcome
+    #: The analyst's own recommendation. Required for an adjustment, and the field the KEV
+    #: floor is enforced on — `lower_priority` on a KEV-listed finding is refused here, by
+    #: the store, and by the database (AGENTS.md §2.8).
+    recommendation: Literal["raise_priority", "lower_priority", "maintain"] | None = None
+    rationale: Annotated[str, Field(max_length=2_000)] | None = None
+
+
+class ReviewEventOut(BaseModel):
+    """One entry of the review history: who decided what, when, and what changed."""
+
+    model_config = ConfigDict(frozen=True)
+
+    kind: Literal["accept", "reject", "adjust", "state_change"]
+    from_state: Literal["proposed", "human_reviewed", "accepted"]
+    to_state: Literal["proposed", "human_reviewed", "accepted"]
+    reviewer: str
+    recommendation: Literal["raise_priority", "lower_priority", "maintain"] | None
+    rationale: str | None
+    occurred_at: datetime
+
+    @classmethod
+    def of(cls, event: InsightReviewEvent) -> ReviewEventOut:
+        return cls(
+            kind=event.kind,
+            from_state=event.from_state,
+            to_state=event.to_state,
+            reviewer=event.reviewer,
+            recommendation=event.recommendation,
+            rationale=event.rationale,
+            occurred_at=event.occurred_at,
+        )
+
+
+class ReviewOut(BaseModel):
+    """The insight after the decision, with the history behind it.
+
+    Returning the history is not decoration: it is how a client shows *what actually
+    happened* rather than what it believes it just did — including on a retry, where the
+    state is the same and no new event was written (ADR-0017).
+    """
+
+    model_config = ConfigDict(frozen=True, protected_namespaces=())
+
+    insight_id: UUID
+    state: Literal["proposed", "human_reviewed", "accepted"]
+    recommendation: Literal["raise_priority", "lower_priority", "maintain"]
+    #: True ⇒ this finding stays visible whatever anyone recommends (AGENTS.md §2.8).
+    kev_locked_visible: bool
+    model_version: str
+    derivation: Literal["llm_generated"] = "llm_generated"
+    history: list[ReviewEventOut] = Field(default_factory=list)
+
+    @classmethod
+    def of(cls, insight: InsightProposal, history: Sequence[InsightReviewEvent]) -> ReviewOut:
+        return cls(
+            insight_id=insight.insight_id,
+            state=insight.state,
+            recommendation=insight.recommendation,
+            kev_locked_visible=insight.kev_locked_visible,
+            model_version=insight.model_version,
+            history=[ReviewEventOut.of(event) for event in history],
+        )
 
 
 class ErrorOut(BaseModel):
