@@ -53,6 +53,19 @@ set -a; . ./.env; set +a    # alembic reads the DSN through config.load_config()
 uv run alembic upgrade head # apply the store schema
 ```
 
+Serving the read API (M4, P18):
+
+```bash
+# SCANNER_TENANT_ID must be set — the API scopes every query to it, and a request
+# cannot name a tenant. See .env.example.
+uv run uvicorn api.main:app --host 127.0.0.1 --port 8000
+```
+
+**Do not expose this beyond localhost.** There is no authentication yet (m4-design §5), so
+the API refuses non-loopback callers regardless of what it is bound to. `SCANNER_API_ALLOW_REMOTE=1`
+lifts that gate and must stay unset until a real auth story exists — it is the gate to
+exposure, not a to-do item (ADR-0016).
+
 Every port is published on `127.0.0.1` only. Postgres defaults to host port **5433** (5432 is
 commonly taken by another local stack); change `POSTGRES_PORT` and `SCANNER_DATABASE_URL`
 together if you want otherwise. LocalStack is pinned to the last license-free community
@@ -84,7 +97,7 @@ secret is actually used.
 
 ## Status
 
-**M0–M3 complete (P1–P17).** A capture goes end to end: parsers turn an ARP
+**M0–M3 complete (P1–P17); M4 started — the read API (P18).** A capture goes end to end: parsers turn an ARP
 table, DHCP leases, or mDNS output into provenance-complete observations; the engine calls
 `require_authorized` on every target *before* anything is recorded; the sink writes them
 idempotently into the append-only spine; entity resolution collapses them into assets by stable
@@ -158,6 +171,17 @@ What the system guarantees, each proven by tests:
   dropped even under a permitted key. The assembled dossier is then swept, and a dossier still
   holding something secret-shaped is refused rather than stripped: if we do not know how it got
   through, we do not know what else did (ADR-0014).
+- **The API re-enforces the boundary; it never trusts the caller.** Every query is scoped to a
+  tenant that comes from server-side configuration — there is no path, query parameter or
+  header by which a caller names one, and an unknown parameter is a 422 rather than something
+  ignored. Asset facts are served only through the redacted dossier, and the read side has no
+  method that returns an observation payload, so "the API cannot serve a secret" is a property
+  of what it can express. Requests run on a read-only database connection. Errors carry a code,
+  a safe sentence and a request id — never a stack trace, SQL, or an internal identifier — and
+  a 404 is the same sentence whether the thing is missing or in another tenant (ADR-0016).
+- **There is no authentication yet, and that is enforced rather than noted.** The API refuses
+  any non-loopback caller unless an operator explicitly turns the gate off. Do not expose it
+  beyond localhost until real auth exists — that is the gate to exposure, not a to-do.
 - **Priority is a rule, not a score.** Every match carries a band (P1–P4), the id of the rule
   that produced it, and a sentence naming the evidence and the threshold it cleared — "CISA
   lists CVE-… as known exploited", "EPSS puts exploitation at 42% and the version is confirmed

@@ -1200,3 +1200,124 @@ class InsightRecord(BaseModel):
     insight_id: UUID
     triage_id: UUID
     created: bool
+
+
+# ---------------------------------------------------------------------------
+# m4-design §2 — read models for the inbound HTTP adapter (the BFF)
+# ---------------------------------------------------------------------------
+
+
+class WorklistFinding(BaseModel):
+    """One row of the analyst's worklist: a deterministic match, ready to be ranked.
+
+    Everything here was decided in the engine — the band and its reason in P17, the
+    confidence state in P14. The API ranks nothing and derives nothing; it serves what the
+    store already holds (m4-design §1).
+    """
+
+    match_id: UUID
+    asset_id: UUID
+    asset_label: str | None  # best available identifier, for a UI row
+    asset_class: AssetClass
+    management_state: ManagementState
+    cve_id: str
+    matched_cpe: str
+    priority: Priority
+    priority_rule: str
+    priority_reason: str
+    confidence_state: ConfidenceState
+    version_source: VersionSource
+    kev: bool
+    epss: Annotated[float, Field(ge=0.0, le=1.0)] | None = None
+    cvss_score: Annotated[float, Field(ge=0.0, le=10.0)] | None = None
+    cvss_version: str | None = None
+    matched_at: datetime
+    has_insight: bool = False
+
+
+class InsightSummary(BaseModel):
+    """An insight awaiting a human, as a queue row (ux-design §3.1)."""
+
+    insight_id: UUID
+    triage_id: UUID
+    asset_id: UUID
+    asset_label: str | None
+    cve_id: str
+    recommendation: Recommendation
+    confidence: Confidence
+    state: Literal["proposed", "human_reviewed", "accepted"]
+    review_outcome: ReviewOutcome | None = None
+    kev_locked_visible: bool = False
+    model_version: str
+    created_at: datetime
+
+
+class WorklistSummary(BaseModel):
+    """The glanceable figures on the landing surface. Counts, not opinions."""
+
+    kev_findings: int = 0
+    p1_findings: int = 0
+    needs_verification: int = 0  # `probable` matches awaiting a credentialed check
+    proposed_insights: int = 0
+    shadow_it_assets: int = 0  # `unmanaged`; `unknown` is never counted here (ADR-0009)
+    unknown_management_assets: int = 0
+    total_findings: int = 0
+
+
+class AssetSummary(BaseModel):
+    """One row of the inventory table (ux-design §3.2)."""
+
+    asset_id: UUID
+    label: str | None
+    asset_class: AssetClass
+    management_state: ManagementState
+    identification_confidence: Confidence
+    confirmed_findings: int = 0
+    probable_findings: int = 0
+    kev_findings: int = 0
+    highest_priority: Priority | None = None
+    last_seen_at: datetime | None = None
+
+
+class AssetPage(BaseModel):
+    """A page of the inventory, with enough to render a pager and nothing more."""
+
+    items: list[AssetSummary] = Field(default_factory=list)
+    total: int = 0
+    limit: int = 50
+    offset: int = 0
+
+
+class AssetFilters(BaseModel):
+    """The inventory filters, validated at the boundary.
+
+    A closed set: every field is an enum, a bool, or a bounded string, so no caller-supplied
+    text ever reaches a query as anything but a bound parameter (AGENTS.md §2.9, §68).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    asset_class: AssetClass | None = None
+    management_state: ManagementState | None = None
+    has_kev: bool | None = None
+    query: Annotated[str, Field(max_length=120)] | None = None  # matches identifier values
+
+
+class TimelineEntry(BaseModel):
+    """One sighting of an asset, as provenance only.
+
+    Deliberately carries no payload. The timeline answers *who saw this, how, and when* —
+    "what did this look like on date X" is answered by the dossier, which is redacted. A
+    raw payload here would be the one place the API served un-projected observation data
+    (dossier contract §4).
+    """
+
+    observation_id: UUID
+    observation_type: str
+    source: str
+    source_type: str
+    collector: str
+    collection_method: str
+    confidence: Confidence
+    observed_at: datetime
+    collected_at: datetime

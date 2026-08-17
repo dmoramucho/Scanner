@@ -21,6 +21,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
+from uuid import UUID
 
 from domain.errors import ValidationError
 from domain.secret import Secret
@@ -110,6 +111,13 @@ class AppConfig:
     region: str
     log_level: str
     nvd: NvdSettings
+    #: The tenant this deployment serves. Single-tenant today, but the API scopes every
+    #: query by it, and it is read from configuration rather than from a request — a caller
+    #: cannot select a tenant (m4-design §1, ADR-0016).
+    tenant_id: UUID | None
+    #: True only when an operator has explicitly accepted that the API answers non-loopback
+    #: clients. Off by default because authentication is deferred (m4-design §5).
+    api_allow_remote: bool
     #: Operator-supplied subnet → VLAN mapping. Empty is valid and means every asset's
     #: segment is *unknown*, which is the honest default when nobody has described the
     #: network (ADR-0015).
@@ -185,7 +193,27 @@ def load_config(env: Mapping[str, str] | None = None) -> AppConfig:
             cache_ttl_hours=positive_number("SCANNER_NVD_CACHE_TTL_HOURS"),
         ),
         vlan_map=_vlan_map(source),
+        tenant_id=_tenant_id(source),
+        # Opt-in, and deliberately awkward to enable: until there is real authentication,
+        # anything that can reach this API is authenticated by nothing at all.
+        api_allow_remote=source.get("SCANNER_API_ALLOW_REMOTE", "").strip() == "1",
     )
+
+
+def _tenant_id(source: Mapping[str, str]) -> UUID | None:
+    """The configured tenant, or None.
+
+    Optional here and required by the API: the engine is run by an operator who passes a
+    tenant explicitly, while an HTTP request has no trustworthy way to name one. Validated
+    as a UUID at startup so a typo fails at boot rather than as an empty worklist.
+    """
+    raw = source.get("SCANNER_TENANT_ID", "").strip()
+    if not raw:
+        return None
+    try:
+        return UUID(raw)
+    except ValueError as exc:
+        raise ConfigError(f"SCANNER_TENANT_ID must be a UUID; got {raw!r}") from exc
 
 
 def _vlan_map(source: Mapping[str, str]) -> SubnetVlanMap:

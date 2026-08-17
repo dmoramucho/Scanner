@@ -57,6 +57,10 @@ INSIGHT_ENGINE_MODULES = [
 #: The model boundary itself.
 LLM_MODULES = sorted((REPO_ROOT / "adapters" / "llm").rglob("*.py"))
 
+#: The inbound adapter (M4). It translates HTTP to port calls; every decision it appears to
+#: make was already made in the engine.
+API_MODULES = sorted((REPO_ROOT / "api").rglob("*.py"))
+
 #: Half A of M3 is deterministic by construction (m3-design §1). A model's CVE knowledge is
 #: stale and hallucinated CVE ids are its most characteristic failure (AGENTS.md §4.8), so
 #: the feed must never acquire one — not even "just to summarise a description".
@@ -291,3 +295,85 @@ def test_advisory_text_is_sanitized_on_the_way_into_the_prompt() -> None:
 
     assert "sanitize(advisory.advisory_text)" in source
     assert "from adapters.advisory.sanitize import" in source
+
+
+@pytest.mark.parametrize("module_path", API_MODULES, ids=lambda p: p.name)
+def test_the_api_contains_no_business_logic(module_path: Path) -> None:
+    """The inbound adapter translates; it does not decide (AGENTS.md §2.1, m4-design §1).
+
+    Correlation, entity resolution, priority derivation and insight generation stay in the
+    engine. An API that imported them would be a second place where the product's answers
+    are computed — and the two would drift, with the interface's version winning because it
+    is the one people see.
+    """
+    source = module_path.read_text(encoding="utf-8")
+
+    for forbidden in (
+        "engine.correlation",
+        "engine.priority",
+        "engine.triage",
+        "engine.reconciliation",
+        "engine.shadow_it",
+        "adapters.llm",
+        "adapters.feed",
+    ):
+        assert forbidden not in source, f"{module_path.name} reaches into {forbidden}"
+
+
+@pytest.mark.parametrize("module_path", API_MODULES, ids=lambda p: p.name)
+def test_the_api_imports_no_model(module_path: Path) -> None:
+    """The model is reached through the insight path or not at all. An HTTP handler that
+    could call one would be an unauthenticated request turning into a prompt."""
+    imported = {root for root, _ in imported_roots(module_path)}
+
+    assert imported & MODEL_PACKAGES == set()
+
+
+def test_the_domain_does_not_import_the_api() -> None:
+    """The dependency runs one way. The domain existed before there was an HTTP layer and
+    must keep working without one (AGENTS.md §2.1)."""
+    for module_path in sorted((REPO_ROOT / "domain").rglob("*.py")):
+        assert "api" not in {root for root, _ in imported_roots(module_path)}
+
+
+def test_the_engine_does_not_import_the_api() -> None:
+    for module_path in sorted((REPO_ROOT / "engine").rglob("*.py")):
+        assert "api" not in {root for root, _ in imported_roots(module_path)}
+
+
+def test_no_endpoint_accepts_a_tenant_from_the_caller() -> None:
+    """The tenant-scoping property, asserted structurally rather than per-route.
+
+    Every handler takes `TenantId`, which resolves server-side; none of them declares a
+    tenant parameter, so there is no route a caller can point at another tenant. A new
+    endpoint that added one would fail here before it ever reached a review (m4-design §1).
+    """
+    source = (REPO_ROOT / "api" / "routes.py").read_text(encoding="utf-8")
+
+    for smell in ("tenant_id:", "tenant_id =", "tenant: UUID", "X-Tenant"):
+        assert smell not in source, f"routes.py appears to accept a tenant from a caller: {smell}"
+    assert "tenant: TenantId" in source
+
+
+def test_the_api_serves_asset_facts_only_through_the_redacted_dossier() -> None:
+    """The redaction contract reaching HTTP, asserted structurally.
+
+    Asset facts come from `DossierAssembler` — allowlist, then a refusal sweep. If a route
+    ever read observations directly and shaped them into a response, the API would have a
+    second path to the estate's data that the contract does not govern (dossier contract §4).
+    """
+    routes_source = (REPO_ROOT / "api" / "routes.py").read_text(encoding="utf-8")
+    security_source = (REPO_ROOT / "api" / "security.py").read_text(encoding="utf-8")
+
+    assert "dossiers.assemble(" in routes_source
+    assert "DossierAssembler(" in security_source
+
+    # The read model is allowed (findings, counts, provenance), but nothing in the routing
+    # layer may touch an observation payload. Checked over the syntax tree rather than the
+    # text, so the word appearing in a docstring is not mistaken for a payload being read.
+    tree = ast.parse(routes_source, filename="routes.py")
+    accessed = {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)} | {
+        node.id for node in ast.walk(tree) if isinstance(node, ast.Name)
+    }
+
+    assert "payload" not in accessed

@@ -20,6 +20,8 @@ from domain.models import (
     AdvisoryEvidence,
     AnchorObservation,
     AssetAnchorSet,
+    AssetFilters,
+    AssetPage,
     AssetResolution,
     AssetView,
     ComponentSnapshot,
@@ -34,6 +36,7 @@ from domain.models import (
     InsightRecord,
     InsightReview,
     InsightReviewEvent,
+    InsightSummary,
     InspectionResult,
     IPAddress,
     KevEntry,
@@ -52,9 +55,12 @@ from domain.models import (
     ScopeDecision,
     SoftwareComponent,
     SourceReadReport,
+    TimelineEntry,
     TriageDossier,
     VulnerabilityMatchInput,
     VulnerabilityMatchRecord,
+    WorklistFinding,
+    WorklistSummary,
 )
 from domain.secret import Secret
 
@@ -647,4 +653,52 @@ class ModelClient(Protocol):
     def complete(self, *, system: str, user: str) -> ModelCompletion:
         """Run one completion. Raises `DependencyError(retryable=…)` if the model is
         unreachable — never a fabricated or empty completion (AGENTS.md §67)."""
+        ...
+
+
+class ReadModel(Protocol):
+    """The read side the interface is served from (m4-design §2).
+
+    A *presentation* port, deliberately separate from the write-side stores: the surfaces in
+    `ux-design.md` need joins and counts no single repository owns, and putting those in the
+    HTTP layer would be business logic in an adapter (AGENTS.md §2.1).
+
+    Two rules hold in every method and are what make this port safe to expose:
+
+    * **`tenant_id` is the first parameter, always.** There is no method that can read
+      without one, so there is no query an inbound adapter can make that is not scoped.
+    * **Nothing here returns a payload.** Observations are served as provenance; the asset's
+      own facts come from the redacted dossier, never from this port (dossier contract §4).
+    """
+
+    def worklist(self, tenant_id: UUID, *, limit: int = 50) -> Sequence[WorklistFinding]:
+        """The prioritised findings: KEV first, then band, then exploitation probability."""
+        ...
+
+    def needs_verification(self, tenant_id: UUID, *, limit: int = 50) -> Sequence[WorklistFinding]:
+        """`probable` matches — the queue an analyst clears by logging in (ux-design §3.1)."""
+        ...
+
+    def review_queue(self, tenant_id: UUID, *, limit: int = 50) -> Sequence[InsightSummary]:
+        """Insights still in `proposed`: the human-in-the-loop work."""
+        ...
+
+    def worklist_summary(self, tenant_id: UUID) -> WorklistSummary:
+        """The glanceable counts. `unknown` management state is never counted as shadow IT."""
+        ...
+
+    def assets(
+        self, tenant_id: UUID, *, filters: AssetFilters, limit: int = 50, offset: int = 0
+    ) -> AssetPage:
+        """A page of the inventory under a validated, closed set of filters."""
+        ...
+
+    def asset_findings(self, tenant_id: UUID, asset_id: UUID) -> Sequence[WorklistFinding]:
+        """Every current finding on one asset, in the same order the worklist uses."""
+        ...
+
+    def asset_timeline(
+        self, tenant_id: UUID, asset_id: UUID, *, limit: int = 100
+    ) -> Sequence[TimelineEntry]:
+        """Who saw this asset, how, and when — provenance only, never payloads."""
         ...
